@@ -1,0 +1,13 @@
+{
+  "id": "fleet_1747859430141",
+  "name": "Nathan",
+  "faction": "Федерация",
+  "createdBy": "Player_s6hc3",
+  "composition": [
+    {
+      "shipClass": "Фрегат",
+      "projectId": "frigate_mark1",
+      "count": 4
+    }
+  ]
+}

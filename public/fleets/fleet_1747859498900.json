@@ -1,0 +1,13 @@
+{
+  "id": "fleet_1747859498900",
+  "name": "Kai",
+  "faction": "Федерация",
+  "createdBy": "Player_9A8rU",
+  "composition": [
+    {
+      "shipClass": "Эсминец",
+      "projectId": "frigate_mark1",
+      "count": 4
+    }
+  ]
+}

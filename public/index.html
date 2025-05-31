@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Лобби, редактор флота/кораблей, бой</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Socket.IO client -->
+    <script src="/socket.io/socket.io.js"></script>
+    <!-- Библиотека с Layout, Hex, polygon_corners и т.д. -->
+    <script src="lib-functions.js"></script>
+    <!-- Точка входа в приложение как ES-модуль -->
+    <script type="module" src="js/main.js"></script>
+</head>
+<body>
+
+<!-- Lobby View -->
+<div id="lobbyView">
+    <h1>Лобби</h1>
+    <div class="container">
+        <div id="roomList">
+            <h2>Комнаты</h2>
+            <ul id="roomsUl"></ul>
+            <button id="refreshRoomsBtn">Обновить</button>
+        </div>
+        <div id="settings">
+            <h2>Игрок: <span id="currentNickname">—</span></h2>
+            <p><span id="selectedFleetLabel">Флот: не выбран</span></p>
+            <button id="chooseFleetBtn">Выбрать флот</button>
+            <button id="toBattleBtn">В бой</button>
+            <hr>
+            <input type="text" id="nicknameInput" placeholder="Новый ник" maxlength="20">
+            <button id="changeNicknameBtn">Сменить ник</button>
+            <hr>
+            <input type="text" id="newRoomName" placeholder="Название комнаты">
+            <button id="createRoomBtn">Создать комнату</button>
+        </div>
+    </div>
+</div>
+
+<!-- Fleet Selection View -->
+<div id="fleetView" class="hidden">
+    <header>
+        <button id="backFromFleetViewBtn">← Назад</button>
+        <button id="createFleetBtn">Создать флот</button>
+        <span id="currentFleet">Текущий флот: —</span>
+    </header>
+    <div class="fleet-grid" id="fleetGrid"></div>
+</div>
+
+<!-- Fleet Editor View -->
+<div id="editorView" class="hidden">
+    <header>
+        <button id="backFromEditorBtn">← Назад</button>
+        <input type="text" id="fleetNameInput" placeholder="Название флота">
+        <select id="factionInput">
+            <option>Федерация</option>
+            <option>Альянс</option>
+            <option>Империя</option>
+        </select>
+        <span id="createdByLabel"></span>
+        <button id="saveFleetBtn">Сохранить флот</button>
+    </header>
+    <div class="editor-flex">
+        <div class="editor-section">
+            <h3>Состав флота</h3>
+            <table id="compositionTable">
+                <thead>
+                <tr><th>Класс</th><th>Проект</th><th>Кол-во</th><th>+</th><th>−</th><th>Удалить</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="editor-section">
+            <h3>Доступные проекты</h3>
+            <table id="projectsTable">
+                <thead>
+                <tr><th>Класс</th><th>Проект</th><th>Добавить</th><th>Ред.</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="info-panel" id="shipInfoPanel">Выберите строку</div>
+</div>
+
+<!-- Ship Editor View -->
+<div id="shipEditorView" class="hidden">
+    <header>
+        <button id="backFromShipEditorBtn">← Назад</button>
+        <input type="text" id="shipNameInput" placeholder="Имя проекта">
+        <select id="shipClassSelect">
+            <option value="Фрегат">Фрегат</option>
+            <option value="Эсминец">Эсминец</option>
+            <option value="Крейсер">Крейсер</option>
+            <option value="Линкор">Линкор</option>
+            <option value="Дредноут">Дредноут</option>
+        </select>
+        <button id="saveShipBtn">Сохранить проект</button>
+    </header>
+    <div id="shipEditorBody">
+        <div id="shipEditorStats">
+            <h3>Характеристики</h3>
+            <ul>
+                <li>Скорость: <span id="statSpeed">-</span></li>
+                <li>Манёвренность: <span id="statManeuver">-</span></li>
+                <li>Броня: <span id="statArmor">-</span></li>
+                <li>Активация: <span id="statActivation">-</span></li>
+                <li>Осталось очков: <span id="statPoints">-</span></li>
+            </ul>
+        </div>
+        <div class="editor-section">
+            <h3>Модули на корабле</h3>
+            <table id="installedModulesTable"><tbody></tbody></table>
+        </div>
+        <div class="editor-section">
+            <h3>Список модулей</h3>
+            <table id="availableModulesTable"><tbody></tbody></table>
+        </div>
+    </div>
+</div>
+
+<!-- Battle View -->
+<div id="battleView" class="hidden">
+    <div class="battle-header">
+        <div class="turn-info">Ход: <span id="turnPlayer">—</span></div>
+        <button id="endTurnBtn">End Turn</button>
+        <button id="surrenderBtn">Surrender</button>
+        <button id="settingsBtn">Settings</button>
+        <button id="helpBtn">Help</button>
+    </div>
+    <div class="battle-body">
+        <div class="side-panel">
+            <h3>Ваш флот</h3>
+            <div id="player1Ships"></div>
+            <div class="dice-pool" id="player1Dice"></div>
+        </div>
+        <div class="center-field">
+            <svg id="hexmap" width="100%" height="100%"></svg>
+        </div>
+        <div class="side-panel">
+            <h3>Флот противника</h3>
+            <div id="player2Ships"></div>
+            <div class="dice-pool" id="player2Dice"></div>
+        </div>
+    </div>
+    <div class="battle-footer" id="battleLog"></div>
+</div>
+
+</body>
+</html>
+
+
+
+

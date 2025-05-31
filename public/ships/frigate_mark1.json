@@ -1,0 +1,12 @@
+{
+  "id": "frigate_mark1",
+  "name": "Фрегат Mk.21",
+  "class": "Эсминец",
+  "modules": [],
+  "speed": 4,
+  "maneuverability": 6,
+  "armor": 6,
+  "points": 8,
+  "activation": 3,
+  "pointsLeft": 8
+}
