@@ -42,11 +42,16 @@ module.exports = function(io) {
      */
     function startBattle(roomId) {
         const room = rooms[roomId];
-        const fleets = Object.entries(room.battle.fleets); // [ [socketId, fleet], … ]
+        // Скопируем флоты из room.statuses → room.battle.fleets
+        room.battle = { fleets: {} };
+        room.players.forEach(pid => {
+            room.battle.fleets[pid] = room.statuses[pid].fleet;
+        });
 
         // 1) Собираем pendingPlacement по каждому флоту
+        //    pendingPlacement: { socketId: [ { shipClass, projectId, count }, … ], … }
         const pendingPlacement = {};
-        fleets.forEach(([pid, fleet]) => {
+        Object.entries(room.battle.fleets).forEach(([pid, fleet]) => {
             pendingPlacement[pid] = fleet.composition.map(c => ({
                 shipClass: c.shipClass,
                 projectId: c.projectId,
@@ -54,21 +59,23 @@ module.exports = function(io) {
             }));
         });
 
-        // 2) Случайный первый расстановщик
-        const firstPlacer = fleets[Math.floor(Math.random() * fleets.length)][0];
+        // 2) Выбираем случайного первого расстановщика
+        const allPids = Object.keys(room.battle.fleets);
+        const firstPlacer = allPids[Math.floor(Math.random() * allPids.length)];
 
-        // 3) Формируем состояние в фазе placement
+        // 3) Формируем начальное состояние battleState
         room.battle.state = {
             id:               roomId,
-            phase:            'placement',
-            currentPlayer:    firstPlacer,
-            pendingPlacement: pendingPlacement,
-            ships:            [],
-            map:              { width:11, height:11, obstacles:[] }
+            phase:            'placement',      // Фаза: «расстановка»
+            currentPlayer:    firstPlacer,      // ходит первый выбранный
+            pendingPlacement: pendingPlacement, // копия массивов composition
+            ships:            [],               // пока никого нет на поле
+            round:            0,                // раунд ещё не начался
+            map:              { width:11, height:11, obstacles:[] } // параметры поля, если нужно
         };
-        room.battle.commands = {}; // пока не нужны
+        room.battle.commands = {}; // сюда потом можно класть команды типа «стреляем», «двигаемся» и т. д.
 
-        // 4) Оповещаем оба клиента
+        // 4) Оповещаем всех участников комнаты «battle_<roomId>»
         io.to(`battle_${roomId}`).emit('battleState', room.battle.state);
     }
 
