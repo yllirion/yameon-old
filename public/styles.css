@@ -204,3 +204,142 @@ input, select {
 .ship-item.clickable {
     cursor: pointer;
 }
+
+.ship-card.selected {
+    background-color: #ffeb3b;
+    border: 2px solid #f57f17;
+}
+
+.ship-icon.highlighted {
+    filter: drop-shadow(0 0 5px #ff0000);
+}
+/*Обновление*/
+.ship-class-group {
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.ship-group-header {
+    background: #f5f5f5;
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #ddd;
+}
+
+.ship-group-header:hover {
+    background: #eee;
+}
+
+.toggle-icon {
+    font-family: monospace;
+    font-weight: bold;
+}
+
+.ship-count {
+    margin-left: auto;
+    color: #666;
+    font-size: 0.9em;
+}
+
+.ships-container {
+    display: none;
+    padding: 8px;
+    gap: 6px;
+    flex-direction: column;
+}
+
+.ships-container.visible {
+    display: flex;
+}
+
+.battle-ship-card {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px;
+    background: #fff;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.battle-ship-card:hover {
+    border-color: #2196F3;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.battle-ship-card.selected {
+    border-color: #2196F3;
+    background: #E3F2FD;
+    box-shadow: 0 2px 8px rgba(33,150,243,0.3);
+}
+
+.ship-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.ship-name {
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+.ship-status {
+    font-size: 0.8em;
+    padding: 2px 6px;
+    border-radius: 12px;
+    color: white;
+}
+
+.ship-status.active {
+    background: #4CAF50;
+}
+
+.ship-status.destroyed {
+    background: #F44336;
+}
+
+.hp-bar {
+    position: relative;
+    height: 16px;
+    background: #eee;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    overflow: hidden;
+}
+
+.hp-fill {
+    height: 100%;
+    transition: width 0.3s;
+    border-radius: 8px;
+}
+
+.hp-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.7em;
+    font-weight: bold;
+    color: #333;
+    text-shadow: 1px 1px 1px rgba(255,255,255,0.5);
+}
+
+.ship-details {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8em;
+    color: #666;
+}
+
+.no-ships {
+    padding: 20px;
+    text-align: center;
+    color: #999;
+    font-style: italic;
+}
