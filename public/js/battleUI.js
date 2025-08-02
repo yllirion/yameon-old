@@ -13,11 +13,11 @@ import {
 
 /** Базовые характеристики по классу – используется для карточек и логов */
 const classStats = {
-    'Фрегат':   { speed: 5, maneuverability: 5, armor: 5, activation: 2 },
-    'Эсминец':  { speed: 4, maneuverability: 6, armor: 6, activation: 3 },
-    'Крейсер':  { speed: 3, maneuverability: 7, armor: 7, activation: 4 },
-    'Линкор':   { speed: 2, maneuverability: 8, armor: 8, activation: 5 },
-    'Дредноут': { speed: 1, maneuverability: 9, armor: 9, activation: 6 }
+    'Фрегат':   { speed: 5, maneuverability: 1, armor: 5, activation: 2 },
+    'Эсминец':  { speed: 4, maneuverability: 1, armor: 6, activation: 3 },
+    'Крейсер':  { speed: 3, maneuverability: 1, armor: 7, activation: 4 },
+    'Линкор':   { speed: 2, maneuverability: 1, armor: 8, activation: 5 },
+    'Дредноут': { speed: 1, maneuverability: 1, armor: 9, activation: 6 }
 };
 
 let selectedShipToPlace = null;
@@ -588,8 +588,8 @@ function renderDicePool(container, dicePool, playerName) {
     const poolInfo = document.createElement('div');
     poolInfo.className = 'dice-pool-info';
     poolInfo.innerHTML = `
-        <small>Всего кубиков: ${totalDice}</small>
-        ${dicePool[1] > 0 ? `<small class="special-note">Спец. кубы: ${dicePool[1]}</small>` : ''}
+        <small>Всего значений: ${totalDice}</small>
+        ${dicePool[1] > 0 ? `<small class="special-note">Спец. значения: ${dicePool[1]}</small>` : ''}
     `;
 
     dicePanel.appendChild(header);
