@@ -343,3 +343,138 @@ input, select {
     color: #999;
     font-style: italic;
 }
+
+.project-name {
+    font-style: italic;
+    color: #666;
+    margin-left: 8px;
+}
+
+.ship-class-badge {
+    background: #e0e0e0;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 0.7em;
+    margin-left: auto;
+}
+
+.ship-modules {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid #eee;
+}
+
+.ship-modules small {
+    color: #888;
+    font-size: 0.75em;
+}
+
+.dice-panel {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 12px;
+    background: #f9f9f9;
+}
+
+.dice-panel-header h4 {
+    margin: 0 0 8px 0;
+    font-size: 1em;
+    color: #333;
+}
+
+.dice-container {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.dice-slot {
+    position: relative;
+    width: 45px;
+    height: 45px;
+    border: 2px solid #ccc;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.dice-slot.has-dice {
+    border-color: #2196F3;
+    background: #E3F2FD;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.dice-slot.special-dice {
+    border-color: #FF9800;
+    background: #FFF3E0;
+}
+
+.dice-slot.empty {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.dice-slot:hover.has-dice {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.dice-face {
+    text-align: center;
+    position: relative;
+}
+
+.dice-value {
+    font-size: 18px;
+    font-weight: bold;
+    color: #333;
+}
+
+.dice-count {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: #F44336;
+    color: white;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid white;
+}
+
+.dice-pool-info {
+    margin-top: 8px;
+    display: flex;
+    gap: 12px;
+}
+
+.dice-pool-info small {
+    color: #666;
+    font-size: 0.8em;
+}
+
+.dice-pool-info .special-note {
+    color: #FF9800;
+    font-weight: bold;
+}
+
+@media (max-width: 768px) {
+    .dice-slot {
+        width: 38px;
+        height: 38px;
+    }
+
+    .dice-value {
+        font-size: 14px;
+    }
+}
