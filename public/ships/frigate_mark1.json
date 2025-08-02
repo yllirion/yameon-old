@@ -1,12 +1,41 @@
 {
   "id": "frigate_mark1",
-  "name": "Фрегат Mk.21",
+  "name": "Фрегат Mk.1000",
   "class": "Эсминец",
-  "modules": [],
+  "modules": [
+    {
+      "id": "art_range_only",
+      "name": "+1 дальность",
+      "type": "модификация артиллерии",
+      "effect": "+1 дальность",
+      "cost": 1
+    },
+    {
+      "id": "art_penetration_plus",
+      "name": "+1 к пробитию брони",
+      "type": "модификация артиллерии",
+      "effect": "+1 к пробитию брони",
+      "cost": 1
+    },
+    {
+      "id": "art_accuracy_plus",
+      "name": "+1 к проверке попадания",
+      "type": "модификация артиллерии",
+      "effect": "+1 к попаданию",
+      "cost": 1
+    },
+    {
+      "id": "art_range_plus",
+      "name": "+1 дальность (−1 пробитие)",
+      "type": "модификация артиллерии",
+      "effect": "+1 дальность, −1 пробитие брони",
+      "cost": 0
+    }
+  ],
   "speed": 4,
   "maneuverability": 6,
   "armor": 6,
   "points": 8,
   "activation": 3,
-  "pointsLeft": 8
+  "pointsLeft": 5
 }

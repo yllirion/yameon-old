@@ -8,6 +8,7 @@ import { initBattleUI } from './battleUI.js';
 const socket = io();
 let myNick = null;
 let currentRoomId = null;
+let currentBattleRoomId = null;  // ← Добавляем переменную
 
 /**
  * Переключает видимые view
@@ -27,6 +28,11 @@ function showView(name) {
   }
 
   if (name === 'editor') loadShipProjects();
+}
+
+// Экспортируем функцию для получения текущей комнаты в бою
+export function getCurrentRoomId() {
+  return currentBattleRoomId;
 }
 
 socket.on('connect', () => {
@@ -60,6 +66,10 @@ socket.on('connect', () => {
       if (!currentRoomId) return alert('Сначала войдите в комнату');
       const fleet = getSelectedFleet();
       if (!fleet) return alert('Сначала выберите флот');
+
+      // Сохраняем roomId для использования в боевом интерфейсе
+      currentBattleRoomId = currentRoomId;  // ← Добавляем эту строку
+
       socket.emit('playerReady', { roomId: currentRoomId, fleet });
     }
   });
@@ -90,7 +100,3 @@ socket.on('connect', () => {
   // --- Боевое окно ---
   initBattleUI(showView, socket, socket.id);
 });
-
-
-
-
