@@ -478,3 +478,25 @@ input, select {
         font-size: 14px;
     }
 }
+
+.ship-icon.selected-for-rotation {
+    filter: drop-shadow(0 0 8px #FFD700) !important;
+}
+
+.rotation-button:hover circle {
+    fill: #1976D2 !important;
+}
+
+.rotation-button:hover {
+    transform: scale(1.1);
+    transition: transform 0.2s;
+}
+
+.rotation-button {
+    transition: transform 0.2s;
+    cursor: pointer;
+}
+
+.ship-icon {
+    cursor: pointer;
+}
