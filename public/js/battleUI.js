@@ -1,6 +1,15 @@
 // public/js/battleUI.js
 
-import { drawHexGrid, renderPlacedShips } from './hexmap.js';
+import {
+    drawHexGrid,
+    renderPlacedShips,
+    addRotationControls,
+    showRotationControlsForShip,
+    showMovementCells,
+    clearMovementHighlight,
+    isMovementCellAvailable,
+    getSelectedShipForMovement
+} from './hexmap.js';
 
 /** Базовые характеристики по классу – используется для карточек и логов */
 const classStats = {
@@ -95,12 +104,133 @@ function calculateModifiedStats(shipClass, modules) {
     return baseStats;
 }
 
+/** Обработчик поворота корабля */
+function handleShipRotation(socket, roomId, shipId, direction) {
+    console.log('Rotating ship:', shipId, direction);
+
+    socket.emit('rotateShip', {
+        roomId: roomId,
+        shipId: shipId,
+        direction: direction
+    });
+
+    logBattle(`Корабль повернут ${direction === 'left' ? 'налево' : 'направо'}`);
+}
+
+/** Настройка обработчиков кликов на корабли для выбора в фазе расстановки */
+function setupShipClickHandlers(state, playerId) {
+    console.log('Setting up ship click handlers for placement');
+
+    // Добавляем обработчики кликов на корабли для показа кнопок поворота
+    // В фазе placement все свои корабли кликабельны для поворота
+    document.querySelectorAll('.ship-icon').forEach(shipIcon => {
+        const shipId = shipIcon.dataset.shipId;
+        const ship = state.ships.find(s => s.id === shipId);
+
+        if (ship && ship.owner === playerId && state.phase === 'placement') {
+            shipIcon.style.cursor = 'pointer';
+
+            shipIcon.onclick = (e) => {
+                e.stopPropagation();
+                console.log('Ship clicked for rotation:', shipId);
+
+                // Показываем кнопки поворота только для этого корабля
+                showRotationControlsForShip(shipId);
+
+                // Подсвечиваем выбранный корабль
+                document.querySelectorAll('.ship-icon.selected-for-rotation').forEach(el => {
+                    el.classList.remove('selected-for-rotation');
+                });
+                shipIcon.classList.add('selected-for-rotation');
+
+                logBattle(`Выбран корабль для поворота: ${ship.shipClass}`);
+            };
+        }
+    });
+}
+
+/** Настройка обработчиков кликов для боевой фазы */
+function setupBattleClickHandlers(state, socket, playerId) {
+    console.log('Setting up battle click handlers');
+
+    // Обработчики кликов по кораблям в боевой фазе
+    document.querySelectorAll('.ship-icon').forEach(shipIcon => {
+        const shipId = shipIcon.dataset.shipId;
+        const ship = state.ships.find(s => s.id === shipId);
+
+        if (ship && ship.owner === playerId && state.currentPlayer === playerId) {
+            shipIcon.style.cursor = 'pointer';
+
+            // Левый клик - показать область движения
+            shipIcon.onclick = (e) => {
+                e.preventDefault();
+                console.log('Left click on ship:', shipId);
+
+                // Очищаем предыдущие выделения
+                clearMovementHighlight();
+
+                // Показываем область движения
+                showMovementCells(ship, state.ships);
+
+                // Подсвечиваем выбранный корабль
+                document.querySelectorAll('.ship-icon.selected-for-movement').forEach(el => {
+                    el.classList.remove('selected-for-movement');
+                });
+                shipIcon.classList.add('selected-for-movement');
+
+                logBattle(`Выбран корабль для движения: ${ship.shipClass} в (${ship.position.q},${ship.position.r})`);
+            };
+
+            // Правый клик - показать область стрельбы (пока заглушка)
+            shipIcon.oncontextmenu = (e) => {
+                e.preventDefault();
+                console.log('Right click on ship:', shipId);
+                logBattle(`Область стрельбы для ${ship.shipClass} (функция в разработке)`);
+            };
+        }
+    });
+
+    // Обработчики кликов по гексам для движения
+    document.querySelectorAll('#hexmap polygon').forEach(poly => {
+        poly.onclick = (e) => {
+            const q = parseInt(poly.dataset.q);
+            const r = parseInt(poly.dataset.r);
+            const s = parseInt(poly.dataset.s);
+
+            console.log('Hex clicked:', { q, r, s });
+
+            // Проверяем, доступен ли этот гекс для движения
+            if (isMovementCellAvailable(q, r, s)) {
+                const selectedShip = getSelectedShipForMovement();
+                if (selectedShip && state.currentPlayer === playerId) {
+                    console.log('Moving ship to:', { q, r, s });
+
+                    // Отправляем команду движения на сервер
+                    socket.emit('moveShip', {
+                        roomId: state.id,
+                        shipId: selectedShip.id,
+                        targetPosition: { q, r, s }
+                    });
+
+                    // Очищаем выделение
+                    clearMovementHighlight();
+
+                    logBattle(`Корабль перемещается в (${q},${r})`);
+                }
+            }
+        };
+    });
+}
+
 /** Инициализация боевого UI */
 export function initBattleUI(showView, socket, playerId) {
     console.log('Initializing battle UI for player:', playerId);
 
     // Загружаем проекты кораблей
     loadShipProjects();
+
+    // Добавляем CSS стили для поворота кораблей и движения
+    addBattleStyles();
 
     // Отписываем старые слушатели
     socket.off('startGame');
@@ -110,6 +240,7 @@ export function initBattleUI(showView, socket, playerId) {
     socket.off('placementError');
     socket.off('turnError');
     socket.off('turnChanged');
+    socket.off('movementError');
 
     // Обработчик ошибок расстановки
     socket.on('placementError', ({ message }) => {
@@ -119,6 +250,11 @@ export function initBattleUI(showView, socket, playerId) {
     // Обработчик ошибок хода
     socket.on('turnError', ({ message }) => {
         logBattle(`Ошибка хода: ${message}`);
+    });
+
+    // Обработчик ошибок движения
+    socket.on('movementError', ({ message }) => {
+        logBattle(`Ошибка движения: ${message}`);
     });
 
     // Обработчик смены хода
@@ -177,25 +313,50 @@ function renderPlacement(state, showView, socket, playerId) {
         drawHexGrid();
         renderPlacedShips(state.ships);
 
-        // Добавляем обработчики кликов на гексы ПОСЛЕ отрисовки
+        // Добавляем кнопки поворота для кораблей текущего игрока
+        state.ships.forEach(ship => {
+            if (ship.owner === playerId) {
+                addRotationControls(
+                    ship,
+                    true,
+                    true,
+                    (shipId, direction) => handleShipRotation(socket, state.id, shipId, direction)
+                );
+            }
+        });
+
+        // Добавляем обработчики кликов на гексы и корабли
         setTimeout(() => {
             setupHexClickHandlers(state, socket, playerId);
+            setupShipClickHandlers(state, playerId);
         }, 100);
     });
 
     // Обновляем текст хода
     const turnElement = document.getElementById('turnPlayer');
     if (turnElement) {
-        turnElement.textContent = state.currentPlayer === playerId
-            ? 'Ваш ход расстановки'
-            : 'Ход соперника';
+        const isMyTurn = state.currentPlayer === playerId;
+        turnElement.textContent = isMyTurn
+            ? `Ваш ход расстановки - Раунд ${state.round}`
+            : `Ход расстановки соперника - Раунд ${state.round}`;
+        turnElement.style.color = isMyTurn ? '#4CAF50' : '#F44336';
+        turnElement.style.fontWeight = 'bold';
     }
 
-    // Рисуем карточки кораблей
+    // Активность кнопки End Turn в фазе расстановки
+    const endTurnBtn = document.getElementById('endTurnBtn');
+    if (endTurnBtn) {
+        const isMyTurn = state.currentPlayer === playerId;
+        endTurnBtn.disabled = !isMyTurn;
+        endTurnBtn.style.opacity = isMyTurn ? '1' : '0.5';
+        endTurnBtn.textContent = 'End Turn';
+    }
+
+    // Рисуем списки кораблей для размещения
     renderPlacementLists(state, playerId);
 }
 
-/** Настройка обработчиков кликов на гексы */
+/** Настройка обработчиков кликов на гексы для размещения */
 function setupHexClickHandlers(state, socket, playerId) {
     console.log('Setting up hex click handlers');
 
@@ -312,6 +473,11 @@ function renderBattle(state, showView, socket, playerId) {
     requestAnimationFrame(() => {
         drawHexGrid();
         renderPlacedShips(state.ships);
+
+        // Добавляем обработчики для боевой фазы
+        setTimeout(() => {
+            setupBattleClickHandlers(state, socket, playerId);
+        }, 100);
     });
 
     // Заголовок хода с подсветкой
@@ -331,35 +497,115 @@ function renderBattle(state, showView, socket, playerId) {
         const isMyTurn = state.currentPlayer === playerId;
         endTurnBtn.disabled = !isMyTurn;
         endTurnBtn.style.opacity = isMyTurn ? '1' : '0.5';
+        endTurnBtn.textContent = 'End Turn';
     }
 
     // Показываем списки уже размещённых кораблей
     const myShips = state.ships.filter(s => s.owner === playerId);
     const opShips = state.ships.filter(s => s.owner !== playerId);
 
-    // Генерируем пулы кубиков (пока что моковые данные)
-    // TODO: Позже это будет приходить от сервера в state
-    const myDicePool = state.dicePoolMy || generateDicePool(state.round, 0);
-    const opDicePool = state.dicePoolOp || generateDicePool(state.round, 0);
+    // Получаем пулы кубиков из состояния
+    const myDicePool = state.dicePools && state.dicePools[playerId]
+        ? state.dicePools[playerId].current
+        : generateDicePool(state.round, 0);
 
-    // Отрисовываем панели кубиков
-    renderDicePool('player1Ships', myDicePool, 'ваши');
-    renderDicePool('player2Ships', opDicePool, 'противника');
+    const opponentId = Object.keys(state.dicePools || {}).find(id => id !== playerId);
+    const opDicePool = state.dicePools && state.dicePools[opponentId]
+        ? state.dicePools[opponentId].current
+        : generateDicePool(state.round, 0);
 
-    // Отрисовываем флоты
-    renderFleetPanel('player1Ships', myShips);
-    renderFleetPanel('player2Ships', opShips);
+    console.log('Dice pools:', { myDicePool, opDicePool, stateDicePools: state.dicePools });
+
+    // Отрисовываем панели в правильном порядке
+    renderBattlePanel('player1Ships', myShips, myDicePool, 'ваши');
+    renderBattlePanel('player2Ships', opShips, opDicePool, 'противника');
+}
+
+/** Отрисовка боевой панели с кубиками и флотом */
+function renderBattlePanel(containerId, ships, dicePool, playerName) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    // Добавляем панель кубиков только если они есть (боевая фаза)
+    if (dicePool) {
+        renderDicePool(container, dicePool, playerName);
+    }
+
+    // Затем добавляем флот
+    renderFleetList(container, ships);
+}
+
+/** Отрисовка панели кубиков принимает контейнер напрямую */
+function renderDicePool(container, dicePool, playerName) {
+    // Создаем панель кубиков
+    const dicePanel = document.createElement('div');
+    dicePanel.className = 'dice-panel';
+
+    // Заголовок
+    const header = document.createElement('div');
+    header.className = 'dice-panel-header';
+    header.innerHTML = `<h4>Кубики ${playerName}</h4>`;
+
+    // Контейнер для кубиков
+    const diceContainer = document.createElement('div');
+    diceContainer.className = 'dice-container';
+
+    // Подсчет общего количества кубиков
+    const totalDice = Object.values(dicePool).reduce((sum, count) => sum + count, 0);
+
+    // Создаем слоты для каждого значения кубика
+    for (let value = 1; value <= 6; value++) {
+        const count = dicePool[value] || 0;
+
+        const diceSlot = document.createElement('div');
+        diceSlot.className = `dice-slot ${count > 0 ? 'has-dice' : 'empty'}`;
+        diceSlot.dataset.value = value;
+
+        // Особое оформление для единиц (специальные кубы)
+        if (value === 1 && count > 0) {
+            diceSlot.classList.add('special-dice');
+        }
+
+        diceSlot.innerHTML = `
+            <div class="dice-face">
+                <span class="dice-value">${value}</span>
+                ${count > 0 ? `<span class="dice-count">${count}</span>` : ''}
+            </div>
+        `;
+
+        // Добавляем подсказку
+        const tooltip = value === 1
+            ? 'Специальные кубы (торпеды, спецдействия)'
+            : `Активация кораблей ${value}+`;
+        diceSlot.title = tooltip;
+
+        diceContainer.appendChild(diceSlot);
+    }
+
+    // Информация о пуле
+    const poolInfo = document.createElement('div');
+    poolInfo.className = 'dice-pool-info';
+    poolInfo.innerHTML = `
+        <small>Всего кубиков: ${totalDice}</small>
+        ${dicePool[1] > 0 ? `<small class="special-note">Спец. кубы: ${dicePool[1]}</small>` : ''}
+    `;
+
+    dicePanel.appendChild(header);
+    dicePanel.appendChild(diceContainer);
+    dicePanel.appendChild(poolInfo);
+
+    container.appendChild(dicePanel);
 }
 
 /** Отрисовка списка кораблей в бою */
-function renderFleetPanel(containerId, ships) {
-    const cont = document.getElementById(containerId);
-    if (!cont) return;
-
-    cont.innerHTML = '';
-
+function renderFleetList(container, ships) {
     if (ships.length === 0) {
-        cont.innerHTML = '<div class="no-ships">Нет кораблей</div>';
+        const noShips = document.createElement('div');
+        noShips.className = 'no-ships';
+        noShips.textContent = 'Нет кораблей';
+        container.appendChild(noShips);
         return;
     }
 
@@ -472,7 +718,7 @@ function renderFleetPanel(containerId, ships) {
 
         groupContainer.appendChild(header);
         groupContainer.appendChild(shipsContainer);
-        cont.appendChild(groupContainer);
+        container.appendChild(groupContainer);
     });
 }
 
@@ -538,74 +784,74 @@ function generateDicePool(round, previousOnes = 0) {
     return pool;
 }
 
-/** Отрисовка панели кубиков */
-function renderDicePool(containerId, dicePool, playerName) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    // Очищаем предыдущий контент
-    const existingDicePanel = container.querySelector('.dice-panel');
-    if (existingDicePanel) {
-        existingDicePanel.remove();
+/** Добавляет CSS стили для поворота кораблей и движения */
+function addBattleStyles() {
+    // Проверяем, не добавлены ли уже стили
+    if (document.getElementById('battle-styles')) {
+        return;
     }
 
-    // Создаем панель кубиков
-    const dicePanel = document.createElement('div');
-    dicePanel.className = 'dice-panel';
-
-    // Заголовок
-    const header = document.createElement('div');
-    header.className = 'dice-panel-header';
-    header.innerHTML = `<h4>Кубики ${playerName}</h4>`;
-
-    // Контейнер для кубиков
-    const diceContainer = document.createElement('div');
-    diceContainer.className = 'dice-container';
-
-    // Подсчет общего количества кубиков
-    const totalDice = Object.values(dicePool).reduce((sum, count) => sum + count, 0);
-
-    // Создаем слоты для каждого значения кубика
-    for (let value = 1; value <= 6; value++) {
-        const count = dicePool[value] || 0;
-
-        const diceSlot = document.createElement('div');
-        diceSlot.className = `dice-slot ${count > 0 ? 'has-dice' : 'empty'}`;
-        diceSlot.dataset.value = value;
-
-        // Особое оформление для единиц (специальные кубы)
-        if (value === 1 && count > 0) {
-            diceSlot.classList.add('special-dice');
-        }
-
-        diceSlot.innerHTML = `
-            <div class="dice-face">
-                <span class="dice-value">${value}</span>
-                ${count > 0 ? `<span class="dice-count">${count}</span>` : ''}
-            </div>
-        `;
-
-        // Добавляем подсказку
-        const tooltip = value === 1
-            ? 'Специальные кубы (торпеды, спецдействия)'
-            : `Активация кораблей ${value}+`;
-        diceSlot.title = tooltip;
-
-        diceContainer.appendChild(diceSlot);
+    const battleStyles = `
+    .ship-icon.selected-for-rotation {
+        filter: drop-shadow(0 0 8px #FFD700) !important;
+    }
+    
+    .ship-icon.selected-for-movement {
+        filter: drop-shadow(0 0 8px #00FF00) !important;
     }
 
-    // Информация о пуле
-    const poolInfo = document.createElement('div');
-    poolInfo.className = 'dice-pool-info';
-    poolInfo.innerHTML = `
-        <small>Всего кубиков: ${totalDice}</small>
-        ${dicePool[1] > 0 ? `<small class="special-note">Спец. кубы: ${dicePool[1]}</small>` : ''}
+    .rotation-button:hover circle {
+        fill: #1976D2 !important;
+        stroke-width: 3;
+    }
+
+    .rotation-button:hover text {
+        font-size: 16px !important;
+    }
+
+    .rotation-button {
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+    
+    .rotation-button circle {
+        transition: all 0.2s ease;
+    }
+    
+    .rotation-button text {
+        transition: all 0.2s ease;
+        pointer-events: none;
+    }
+    
+    .rotation-button:active circle {
+        fill: #0D47A1 !important;
+    }
+    
+    #hexmap polygon.movement-available {
+        fill: rgba(52,211,153,0.3) !important;
+        stroke: #34d399 !important;
+        stroke-width: 2 !important;
+        cursor: pointer !important;
+    }
+    
+    #hexmap polygon.movement-available:hover {
+        fill: rgba(52,211,153,0.5) !important;
+    }
+    
+    .ship-icon {
+        cursor: pointer;
+    }
+    
+    .ship-icon:hover {
+        filter: brightness(1.1);
+    }
     `;
 
-    dicePanel.appendChild(header);
-    dicePanel.appendChild(diceContainer);
-    dicePanel.appendChild(poolInfo);
+    // Создаем и добавляем элемент style
+    const styleSheet = document.createElement('style');
+    styleSheet.id = 'battle-styles';
+    styleSheet.textContent = battleStyles;
+    document.head.appendChild(styleSheet);
 
-    // Вставляем панель в начало контейнера (перед списком кораблей)
-    container.insertBefore(dicePanel, container.firstChild);
+    console.log('Battle styles added');
 }
