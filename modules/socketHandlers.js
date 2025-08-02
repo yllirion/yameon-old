@@ -7,21 +7,25 @@ module.exports = function(io) {
 
     // Базовые статы по классу корабля
     const classStats = {
-        'Фрегат':   { speed:5,  maneuverability:1,  armor:5,  points:4,  activation:2 },
-        'Эсминец':  { speed:4,  maneuverability:1,  armor:6,  points:8,  activation:3 },
-        'Крейсер':  { speed:3,  maneuverability:1,  armor:7,  points:12, activation:4 },
-        'Линкор':   { speed:2,  maneuverability:1,  armor:8,  points:16, activation:5 },
-        'Дредноут': { speed:1,  maneuverability:1,  armor:9,  points:20, activation:6 }
+        'Фрегат':   { speed:5,  maneuverability:5,  armor:5,  points:4,  activation:2 },
+        'Эсминец':  { speed:4,  maneuverability:6,  armor:6,  points:8,  activation:3 },
+        'Крейсер':  { speed:3,  maneuverability:7,  armor:7,  points:12, activation:4 },
+        'Линкор':   { speed:2,  maneuverability:8,  armor:8,  points:16, activation:5 },
+        'Дредноут': { speed:1,  maneuverability:9,  armor:9,  points:20, activation:6 }
     };
 
-    // Бросок N кубиков D6
-    function rollDice(n) {
-        const counts = {1:0,2:0,3:0,4:0,5:0,6:0};
-        for (let i = 0; i < n; i++) {
-            const face = Math.floor(Math.random() * 6) + 1;
-            counts[face]++;
+    // Генерация пула кубиков
+    function rollDicePool(numDice, previousOnes = 0) {
+        const pool = { 1: previousOnes, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+
+        // Бросаем кубики
+        for (let i = 0; i < numDice; i++) {
+            const roll = Math.floor(Math.random() * 6) + 1;
+            pool[roll]++;
         }
-        return counts;
+
+        console.log(`Rolled ${numDice} dice, got pool:`, pool);
+        return pool;
     }
 
     // Рассылка списка комнат всем подключённым
@@ -57,20 +61,52 @@ module.exports = function(io) {
         // 2) Случайный первый расстановщик
         const firstPlacer = fleets[Math.floor(Math.random() * fleets.length)][0];
 
-        // 3) Формируем состояние в фазе placement
+        // 3) Инициализируем пулы кубиков для каждого игрока
+        const dicePools = {};
+        fleets.forEach(([pid]) => {
+            dicePools[pid] = {
+                current: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }, // Пустой пул в начале
+                savedOnes: 0 // Сохраненные единицы с предыдущих раундов
+            };
+        });
+
+        // 4) Формируем состояние в фазе placement
         room.battle.state = {
             id:               roomId,
             phase:            'placement',
             currentPlayer:    firstPlacer,
             pendingPlacement: pendingPlacement,
             ships:            [],
-            map:              { width:11, height:11, obstacles:[] }
+            map:              { width:11, height:11, obstacles:[] },
+            dicePools:        dicePools // Добавляем пулы кубиков
         };
         room.battle.commands = {}; // пока не нужны
 
-        // 4) Оповещаем оба клиента
+        // 5) Оповещаем оба клиента
         console.log('Sending battleState to clients:', room.battle.state);
         io.to(`battle_${roomId}`).emit('battleState', room.battle.state);
+    }
+
+    /**
+     * Начало боевой фазы с генерацией кубиков
+     */
+    function startBattlePhase(roomId) {
+        const room = rooms[roomId];
+        const battleState = room.battle.state;
+
+        // Переходим в боевую фазу
+        battleState.phase = 'battle';
+        battleState.round = 1;
+        battleState.currentPlayer = room.players[0]; // Первый игрок начинает
+
+        // Генерируем кубики для первого раунда
+        room.players.forEach(pid => {
+            const dicePool = rollDicePool(1, 0); // Первый раунд = 1 кубик
+            battleState.dicePools[pid].current = dicePool;
+            battleState.dicePools[pid].savedOnes = 0;
+        });
+
+        console.log('Battle phase started, round 1, dice pools:', battleState.dicePools);
     }
 
     /**
@@ -242,9 +278,7 @@ module.exports = function(io) {
                 b.state.currentPlayer = otherPlayerId;
             } else {
                 // Все корабли расставлены - переходим в бой
-                b.state.phase = 'battle';
-                b.state.round = 1;
-                b.state.currentPlayer = room.players[0]; // Первый игрок начинает бой
+                startBattlePhase(roomId);
                 console.log('Placement complete, starting battle phase');
             }
 
@@ -257,53 +291,89 @@ module.exports = function(io) {
          * Завершение хода в боевой фазе
          */
         socket.on('endTurn', ({ roomId }) => {
-            console.log('endTurn received from:', socket.id, 'room:', roomId);
+            console.log('=== END TURN EVENT RECEIVED ===');
+            console.log('From player:', socket.id);
+            console.log('For room:', roomId);
+            console.log('Player nickname:', nicknames[socket.id]);
 
             const room = rooms[roomId];
             if (!room || !room.battle || !room.battle.state) {
-                console.log('Room or battle not found');
+                console.log('ERROR: Room or battle not found');
                 return;
             }
 
             const battleState = room.battle.state;
+            console.log('Current battle state:', {
+                phase: battleState.phase,
+                currentPlayer: battleState.currentPlayer,
+                round: battleState.round
+            });
 
             // Проверяем, что сейчас ход этого игрока
             if (battleState.currentPlayer !== socket.id) {
-                console.log('Not current player turn');
+                console.log('ERROR: Not current player turn');
+                console.log('Expected:', battleState.currentPlayer);
+                console.log('Actual:', socket.id);
                 socket.emit('turnError', { message: 'Сейчас не ваш ход' });
                 return;
             }
 
             // Проверяем, что мы в боевой фазе
             if (battleState.phase !== 'battle') {
-                console.log('Not in battle phase');
+                console.log('ERROR: Not in battle phase, current phase:', battleState.phase);
                 return;
             }
 
             // Переключаем игрока
             const otherPlayer = room.players.find(id => id !== socket.id);
+            console.log('Switching turn from', nicknames[socket.id], 'to', nicknames[otherPlayer]);
+
             battleState.currentPlayer = otherPlayer;
 
-            // Увеличиваем раунд, если ход вернулся к первому игроку
-            if (battleState.currentPlayer === room.players[0]) {
+            // Проверяем, нужно ли начать новый раунд
+            const isNewRound = battleState.currentPlayer === room.players[0];
+
+            if (isNewRound) {
                 battleState.round++;
                 console.log(`Starting round ${battleState.round}`);
 
-                // Здесь можно добавить логику начала нового раунда
-                // Например, восстановление движения кораблей, перераспределение кубиков и т.д.
+                // Генерируем новые пулы кубиков для нового раунда
+                room.players.forEach(pid => {
+                    const playerDice = battleState.dicePools[pid];
+
+                    // Сохраняем единицы из текущего пула
+                    const savedOnes = playerDice.current[1] + playerDice.savedOnes;
+
+                    // Генерируем новый пул кубиков
+                    const newPool = rollDicePool(battleState.round, savedOnes);
+
+                    playerDice.current = newPool;
+                    playerDice.savedOnes = newPool[1]; // Обновляем счетчик сохраненных единиц
+
+                    console.log(`Player ${nicknames[pid]} dice pool:`, newPool);
+                });
             }
 
-            console.log(`Turn passed to: ${nicknames[battleState.currentPlayer]}`);
+            console.log('New battle state:', {
+                phase: battleState.phase,
+                currentPlayer: battleState.currentPlayer,
+                currentPlayerNick: nicknames[battleState.currentPlayer],
+                round: battleState.round
+            });
 
             // Отправляем обновленное состояние
+            console.log('Sending updated battleState to room:', `battle_${roomId}`);
             io.to(`battle_${roomId}`).emit('battleState', battleState);
 
             // Логируем смену хода
             io.to(`battle_${roomId}`).emit('turnChanged', {
                 currentPlayer: battleState.currentPlayer,
                 currentPlayerNick: nicknames[battleState.currentPlayer],
-                round: battleState.round
+                round: battleState.round,
+                isNewRound: isNewRound
             });
+
+            console.log('=== END TURN EVENT COMPLETED ===');
         });
 
         // Сдача

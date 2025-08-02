@@ -31,10 +31,11 @@ function showView(name) {
 }
 
 // Экспортируем функцию для получения текущей комнаты в бою
+/*
 export function getCurrentRoomId() {
   return currentBattleRoomId;
 }
-
+*/
 socket.on('connect', () => {
   // Инициализация ника
   myNick = `Player_${socket.id.slice(0,5)}`;

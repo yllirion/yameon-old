@@ -14,6 +14,10 @@ const classStats = {
 let selectedShipToPlace = null;
 let initialPlacement    = null;
 let lastShips           = [];
+let currentBattleRoomId = null;
+
+// Кэш для проектов кораблей
+let shipProjectsCache = {};
 
 /** Пишет сообщение в лог снизу в #battleLog */
 function logBattle(msg) {
@@ -39,9 +43,64 @@ function highlightShipOnMap(shipId) {
     }
 }
 
+/** Загружает информацию о проектах кораблей */
+async function loadShipProjects() {
+    if (Object.keys(shipProjectsCache).length === 0) {
+        try {
+            const response = await fetch('/api/ships');
+            const projects = await response.json();
+            projects.forEach(project => {
+                shipProjectsCache[project.id] = project;
+            });
+            console.log('Ship projects loaded:', shipProjectsCache);
+        } catch (error) {
+            console.error('Failed to load ship projects:', error);
+        }
+    }
+    return shipProjectsCache;
+}
+
+/** Получает имя проекта по ID */
+function getProjectName(projectId) {
+    const project = shipProjectsCache[projectId];
+    return project ? project.name : projectId;
+}
+
+/** Получает полную информацию о проекте */
+function getProjectInfo(projectId) {
+    return shipProjectsCache[projectId] || null;
+}
+
+/** Функция для расчета модифицированных характеристик */
+function calculateModifiedStats(shipClass, modules) {
+    const baseStats = { ...classStats[shipClass] };
+
+    modules.forEach(module => {
+        // Простая логика модификации характеристик
+        if (module.effect.includes('+1 к скорости')) {
+            baseStats.speed += 1;
+        } else if (module.effect.includes('-1 к скорости')) {
+            baseStats.speed -= 1;
+        } else if (module.effect.includes('+1 к манёвренности')) {
+            baseStats.maneuverability += 1;
+        } else if (module.effect.includes('-1 к манёвренности')) {
+            baseStats.maneuverability -= 1;
+        } else if (module.effect.includes('+1 к броне')) {
+            baseStats.armor += 1;
+        } else if (module.effect.includes('-1 к броне')) {
+            baseStats.armor -= 1;
+        }
+    });
+
+    return baseStats;
+}
+
 /** Инициализация боевого UI */
 export function initBattleUI(showView, socket, playerId) {
     console.log('Initializing battle UI for player:', playerId);
+
+    // Загружаем проекты кораблей
+    loadShipProjects();
 
     // Отписываем старые слушатели
     socket.off('startGame');
@@ -69,6 +128,10 @@ export function initBattleUI(showView, socket, playerId) {
 
     socket.on('battleState', state => {
         console.log('[battleState received]', state);
+
+        // Сохраняем roomId локально
+        currentBattleRoomId = state.id;
+
         if (state.phase === 'placement') {
             // При первой расстановке запомним исходный список
             if (!initialPlacement) {
@@ -102,42 +165,6 @@ export function initBattleUI(showView, socket, playerId) {
 
     // Настраиваем кнопки боевого интерфейса
     setupBattleButtons(socket, playerId);
-}
-
-function setupBattleButtons(socket, playerId) {
-    // Кнопка End Turn
-    const endTurnBtn = document.getElementById('endTurnBtn');
-    if (endTurnBtn) {
-        // Убираем старые обработчики
-        endTurnBtn.onclick = null;
-
-        endTurnBtn.onclick = () => {
-            console.log('End Turn button clicked');
-
-            // Получаем текущую комнату
-            const roomId = getCurrentRoomId();  // ← Используем импортированную функцию
-
-            if (!roomId) {
-                logBattle('Ошибка: не найдена текущая комната');
-                return;
-            }
-
-            // Отправляем сигнал о завершении хода
-            socket.emit('endTurn', { roomId });
-            logBattle('Ход завершен');
-        };
-    }
-
-    // Кнопка Surrender
-    const surrenderBtn = document.getElementById('surrenderBtn');
-    if (surrenderBtn) {
-        surrenderBtn.onclick = () => {
-            if (confirm('Вы уверены, что хотите сдаться?')) {
-                socket.emit('surrender');
-                logBattle('Вы сдались');
-            }
-        };
-    }
 }
 
 /** Рендер фазы расстановки */
@@ -239,12 +266,15 @@ function renderPlacementLists(state, playerId) {
 
         groups.forEach(group => {
             const { shipClass, projectId, count } = group;
+            const projectName = getProjectName(projectId);
+
             for (let i = 0; i < count; i++) {
                 const card = document.createElement('div');
                 card.className = 'ship-card';
                 card.dataset.projectId = projectId;
                 card.innerHTML = `
-                    <h4>${shipClass}</h4>
+                    <h4>${projectName}</h4>
+                    <p class="ship-class-badge">${shipClass}</p>
                     <p>Сп:${classStats[shipClass].speed}
                        Мн:${classStats[shipClass].maneuverability}
                        Бр:${classStats[shipClass].armor}
@@ -263,7 +293,7 @@ function renderPlacementLists(state, playerId) {
                         card.classList.add('selected');
                         selectedShipToPlace = { projectId };
 
-                        logBattle(`Выбран корабль: ${shipClass}`);
+                        logBattle(`Выбран корабль: ${projectName} (${shipClass})`);
                     };
                 }
 
@@ -284,22 +314,44 @@ function renderBattle(state, showView, socket, playerId) {
         renderPlacedShips(state.ships);
     });
 
-    // Заголовок хода
+    // Заголовок хода с подсветкой
     const turnElement = document.getElementById('turnPlayer');
     if (turnElement) {
-        turnElement.textContent = state.currentPlayer === playerId ? 'Ваш ход' : 'Ход соперника';
+        const isMyTurn = state.currentPlayer === playerId;
+        turnElement.textContent = isMyTurn
+            ? `Ваш ход - Раунд ${state.round}`
+            : `Ход соперника - Раунд ${state.round}`;
+        turnElement.style.color = isMyTurn ? '#4CAF50' : '#F44336';
+        turnElement.style.fontWeight = 'bold';
+    }
+
+    // Активность кнопки End Turn
+    const endTurnBtn = document.getElementById('endTurnBtn');
+    if (endTurnBtn) {
+        const isMyTurn = state.currentPlayer === playerId;
+        endTurnBtn.disabled = !isMyTurn;
+        endTurnBtn.style.opacity = isMyTurn ? '1' : '0.5';
     }
 
     // Показываем списки уже размещённых кораблей
     const myShips = state.ships.filter(s => s.owner === playerId);
     const opShips = state.ships.filter(s => s.owner !== playerId);
 
+    // Генерируем пулы кубиков (пока что моковые данные)
+    // TODO: Позже это будет приходить от сервера в state
+    const myDicePool = state.dicePoolMy || generateDicePool(state.round, 0);
+    const opDicePool = state.dicePoolOp || generateDicePool(state.round, 0);
+
+    // Отрисовываем панели кубиков
+    renderDicePool('player1Ships', myDicePool, 'ваши');
+    renderDicePool('player2Ships', opDicePool, 'противника');
+
+    // Отрисовываем флоты
     renderFleetPanel('player1Ships', myShips);
     renderFleetPanel('player2Ships', opShips);
 }
 
 /** Отрисовка списка кораблей в бою */
-
 function renderFleetPanel(containerId, ships) {
     const cont = document.getElementById(containerId);
     if (!cont) return;
@@ -311,43 +363,69 @@ function renderFleetPanel(containerId, ships) {
         return;
     }
 
-    // Сгруппировать по классу
+    // Загружаем проекты кораблей перед отображением
+    loadShipProjects();
+
+    // Группируем по проекту, а не только по классу
     const groups = ships.reduce((acc, ship) => {
-        (acc[ship.shipClass] = acc[ship.shipClass] || []).push(ship);
+        const key = `${ship.shipClass}_${ship.projectId}`;
+        if (!acc[key]) {
+            acc[key] = {
+                shipClass: ship.shipClass,
+                projectId: ship.projectId,
+                ships: []
+            };
+        }
+        acc[key].ships.push(ship);
         return acc;
     }, {});
 
-    Object.entries(groups).forEach(([shipClass, list]) => {
+    Object.entries(groups).forEach(([key, group]) => {
+        const { shipClass, projectId, ships } = group;
+
         // Создаем контейнер для группы
         const groupContainer = document.createElement('div');
         groupContainer.className = 'ship-class-group';
 
-        // Заголовок группы (складной)
+        // Получаем название проекта
+        const projectName = getProjectName(projectId);
+        const projectInfo = getProjectInfo(projectId);
+
+        // Заголовок группы с названием проекта
         const header = document.createElement('div');
         header.className = 'ship-group-header';
         header.innerHTML = `
             <span class="toggle-icon">▼</span>
-            <strong>${shipClass}</strong> 
-            <span class="ship-count">×${list.length}</span>
+            <strong>${shipClass}</strong>
+            <span class="project-name">"${projectName}"</span>
+            <span class="ship-count">×${ships.length}</span>
         `;
 
         // Контейнер для карточек кораблей
         const shipsContainer = document.createElement('div');
         shipsContainer.className = 'ships-container visible';
 
-        list.forEach((ship, index) => {
+        ships.forEach((ship, index) => {
             const shipCard = document.createElement('div');
             shipCard.className = 'battle-ship-card clickable';
             shipCard.dataset.shipId = ship.id;
 
             // Правильный расчет maxHP через активацию
-            const maxHP = classStats[ship.shipClass].activation;  // ← ИСПРАВЛЕНО
+            const maxHP = classStats[ship.shipClass].activation;
             const hpPercent = (ship.hp / maxHP) * 100;
             const hpColor = hpPercent > 60 ? '#4CAF50' : hpPercent > 30 ? '#FF9800' : '#F44336';
 
+            // Получаем характеристики проекта (если есть модификации)
+            let displayStats = classStats[ship.shipClass];
+            if (projectInfo && projectInfo.modules && projectInfo.modules.length > 0) {
+                // Если у проекта есть модули, показываем модифицированные характеристики
+                displayStats = calculateModifiedStats(ship.shipClass, projectInfo.modules);
+            }
+
             shipCard.innerHTML = `
                 <div class="ship-card-header">
-                    <span class="ship-name">${shipClass} #${index + 1}</span>
+                    <span class="ship-name">${projectName} #${index + 1}</span>
+                    <span class="ship-class-badge">${shipClass}</span>
                     <span class="ship-status ${ship.hp > 0 ? 'active' : 'destroyed'}">${ship.hp > 0 ? 'Активен' : 'Уничтожен'}</span>
                 </div>
                 <div class="ship-stats">
@@ -357,8 +435,13 @@ function renderFleetPanel(containerId, ships) {
                     </div>
                     <div class="ship-details">
                         <span>Поз: (${ship.position.q}, ${ship.position.r})</span>
-                        <span>Ак:${classStats[shipClass].activation} Сп:${classStats[shipClass].speed} Бр:${classStats[shipClass].armor}</span>
+                        <span>Сп:${displayStats.speed} Мн:${displayStats.maneuverability} Бр:${displayStats.armor}</span>
                     </div>
+                    ${projectInfo && projectInfo.modules && projectInfo.modules.length > 0 ?
+                `<div class="ship-modules">
+                            <small>Модули: ${projectInfo.modules.map(m => m.name).join(', ')}</small>
+                        </div>` : ''
+            }
                 </div>
             `;
 
@@ -374,8 +457,8 @@ function renderFleetPanel(containerId, ships) {
                 // Подсвечиваем на карте
                 highlightShipOnMap(ship.id);
 
-                // Логируем
-                logBattle(`Выбран ${shipClass} #${index + 1} (HP: ${ship.hp}/${maxHP})`);
+                // Логируем с названием проекта
+                logBattle(`Выбран ${projectName} #${index + 1} (${shipClass}, HP: ${ship.hp}/${maxHP})`);
             };
 
             shipsContainer.appendChild(shipCard);
@@ -391,4 +474,138 @@ function renderFleetPanel(containerId, ships) {
         groupContainer.appendChild(shipsContainer);
         cont.appendChild(groupContainer);
     });
+}
+
+function setupBattleButtons(socket, playerId) {
+    console.log('Setting up battle buttons for player:', playerId);
+
+    // Кнопка End Turn
+    const endTurnBtn = document.getElementById('endTurnBtn');
+    console.log('End Turn button found:', endTurnBtn);
+
+    if (endTurnBtn) {
+        // Убираем старые обработчики
+        endTurnBtn.onclick = null;
+
+        endTurnBtn.onclick = () => {
+            console.log('End Turn button clicked!');
+
+            // Используем локальную переменную вместо импорта
+            const roomId = currentBattleRoomId;
+            console.log('Current room ID:', roomId);
+
+            if (!roomId) {
+                console.error('No room ID found');
+                logBattle('Ошибка: не найдена текущая комната');
+                return;
+            }
+
+            console.log('Sending endTurn event with roomId:', roomId);
+
+            // Отправляем сигнал о завершении хода
+            socket.emit('endTurn', { roomId });
+            logBattle('Ход завершен - сигнал отправлен');
+        };
+
+        console.log('End Turn button handler attached');
+    } else {
+        console.error('End Turn button not found in DOM');
+    }
+
+    // Кнопка Surrender
+    const surrenderBtn = document.getElementById('surrenderBtn');
+    if (surrenderBtn) {
+        surrenderBtn.onclick = () => {
+            if (confirm('Вы уверены, что хотите сдаться?')) {
+                console.log('Surrender button clicked');
+                socket.emit('surrender');
+                logBattle('Вы сдались');
+            }
+        };
+        console.log('Surrender button handler attached');
+    }
+}
+
+function generateDicePool(round, previousOnes = 0) {
+    const pool = { 1: previousOnes, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+
+    // Бросаем количество кубиков равное номеру раунда
+    for (let i = 0; i < round; i++) {
+        const roll = Math.floor(Math.random() * 6) + 1;
+        pool[roll]++;
+    }
+
+    return pool;
+}
+
+/** Отрисовка панели кубиков */
+function renderDicePool(containerId, dicePool, playerName) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Очищаем предыдущий контент
+    const existingDicePanel = container.querySelector('.dice-panel');
+    if (existingDicePanel) {
+        existingDicePanel.remove();
+    }
+
+    // Создаем панель кубиков
+    const dicePanel = document.createElement('div');
+    dicePanel.className = 'dice-panel';
+
+    // Заголовок
+    const header = document.createElement('div');
+    header.className = 'dice-panel-header';
+    header.innerHTML = `<h4>Кубики ${playerName}</h4>`;
+
+    // Контейнер для кубиков
+    const diceContainer = document.createElement('div');
+    diceContainer.className = 'dice-container';
+
+    // Подсчет общего количества кубиков
+    const totalDice = Object.values(dicePool).reduce((sum, count) => sum + count, 0);
+
+    // Создаем слоты для каждого значения кубика
+    for (let value = 1; value <= 6; value++) {
+        const count = dicePool[value] || 0;
+
+        const diceSlot = document.createElement('div');
+        diceSlot.className = `dice-slot ${count > 0 ? 'has-dice' : 'empty'}`;
+        diceSlot.dataset.value = value;
+
+        // Особое оформление для единиц (специальные кубы)
+        if (value === 1 && count > 0) {
+            diceSlot.classList.add('special-dice');
+        }
+
+        diceSlot.innerHTML = `
+            <div class="dice-face">
+                <span class="dice-value">${value}</span>
+                ${count > 0 ? `<span class="dice-count">${count}</span>` : ''}
+            </div>
+        `;
+
+        // Добавляем подсказку
+        const tooltip = value === 1
+            ? 'Специальные кубы (торпеды, спецдействия)'
+            : `Активация кораблей ${value}+`;
+        diceSlot.title = tooltip;
+
+        diceContainer.appendChild(diceSlot);
+    }
+
+    // Информация о пуле
+    const poolInfo = document.createElement('div');
+    poolInfo.className = 'dice-pool-info';
+    poolInfo.innerHTML = `
+        <small>Всего кубиков: ${totalDice}</small>
+        ${dicePool[1] > 0 ? `<small class="special-note">Спец. кубы: ${dicePool[1]}</small>` : ''}
+    `;
+
+    dicePanel.appendChild(header);
+    dicePanel.appendChild(diceContainer);
+    dicePanel.appendChild(poolInfo);
+
+    // Вставляем панель в начало контейнера (перед списком кораблей)
+    container.insertBefore(dicePanel, container.firstChild);
 }
