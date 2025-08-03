@@ -6,7 +6,7 @@
   "composition": [
     {
       "shipClass": "Фрегат",
-      "projectId": "frigate_mark1",
+      "projectId": "ship002",
       "count": 1
     }
   ]

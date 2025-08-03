@@ -1,0 +1,33 @@
+{
+  "id": "fleet_1754220425985",
+  "name": "Каждой твари по штуке",
+  "faction": "Федерация",
+  "createdBy": "Player_hHFt_",
+  "composition": [
+    {
+      "shipClass": "Линкор",
+      "projectId": "ship004",
+      "count": 1
+    },
+    {
+      "shipClass": "Крейсер",
+      "projectId": "ship003",
+      "count": 1
+    },
+    {
+      "shipClass": "Эсминец",
+      "projectId": "ship002",
+      "count": 1
+    },
+    {
+      "shipClass": "Дредноут",
+      "projectId": "ship005",
+      "count": 1
+    },
+    {
+      "shipClass": "Фрегат",
+      "projectId": "ship001",
+      "count": 1
+    }
+  ]
+}

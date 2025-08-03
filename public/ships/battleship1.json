@@ -1,0 +1,13 @@
+{
+  "id": "ship004",
+  "name": "Базовый линкор",
+  "class": "Линкор",
+  "modules": [
+  ],
+  "speed": 2,
+  "maneuverability": 1,
+  "armor": 8,
+  "points": 16,
+  "activation": 5,
+  "pointsLeft": 16
+}

@@ -1,0 +1,13 @@
+{
+  "id": "ship007",
+  "name": "Фрегат Мнвр. 3>",
+  "class": "Фрегат",
+  "modules": [
+  ],
+  "speed": 5,
+  "maneuverability": 3,
+  "armor": 5,
+  "points": 4,
+  "activation": 2,
+  "pointsLeft": 4
+}

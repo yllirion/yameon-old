@@ -1,0 +1,13 @@
+{
+  "id": "fleet_1754214151324",
+  "name": "Крейсера",
+  "faction": "Федерация",
+  "createdBy": "Player_BGKY6",
+  "composition": [
+    {
+      "shipClass": "Крейсер",
+      "projectId": "ship001",
+      "count": 1
+    }
+  ]
+}
