@@ -1,0 +1,23 @@
+{
+  "id": "fleet_1754220466819",
+  "name": "Все варианты маневренности",
+  "faction": "Федерация",
+  "createdBy": "Player_hHFt_",
+  "composition": [
+    {
+      "shipClass": "Фрегат",
+      "projectId": "ship001",
+      "count": 1
+    },
+    {
+      "shipClass": "Фрегат",
+      "projectId": "ship006",
+      "count": 1
+    },
+    {
+      "shipClass": "Фрегат",
+      "projectId": "ship007",
+      "count": 1
+    }
+  ]
+}

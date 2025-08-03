@@ -1,0 +1,13 @@
+{
+  "id": "ship002",
+  "name": "Базовый эсминец",
+  "class": "Эсминец",
+  "modules": [
+  ],
+  "speed": 4,
+  "maneuverability": 1,
+  "armor": 5,
+  "points": 8,
+  "activation": 3,
+  "pointsLeft": 8
+}

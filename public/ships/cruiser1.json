@@ -1,0 +1,13 @@
+{
+  "id": "ship003",
+  "name": "Базовый крейсер",
+  "class": "Крейсер",
+  "modules": [
+  ],
+  "speed": 3,
+  "maneuverability": 1,
+  "armor": 7,
+  "points": 12,
+  "activation": 4,
+  "pointsLeft": 12
+}

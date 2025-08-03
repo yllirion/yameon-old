@@ -1,0 +1,13 @@
+{
+  "id": "ship005",
+  "name": "Базовый дредноут",
+  "class": "Дредноут",
+  "modules": [
+  ],
+  "speed": 1,
+  "maneuverability": 1,
+  "armor": 9,
+  "points": 20,
+  "activation": 6,
+  "pointsLeft": 20
+}
