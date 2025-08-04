@@ -265,6 +265,18 @@ export function initBattleUI(showView, socket, playerId) {
         // Сохраняем roomId локально
         currentBattleRoomId = state.id;
 
+        if (state.ships) {
+            console.log('=== SHIPS MOVEMENT POINTS UPDATE ===');
+            state.ships.forEach(ship => {
+                console.log(`Ship ${ship.id} (${ship.shipClass}):`);
+                console.log(`  Speed: ${ship.currentSpeed}/${ship.maxSpeed}`);
+                console.log(`  Maneuverability: ${ship.currentManeuverability}/${ship.maxManeuverability}`);
+                console.log(`  Position: (${ship.position.q}, ${ship.position.r}, ${ship.position.s})`);
+                console.log(`  Direction: ${ship.dir}`);
+            });
+            console.log('=== END SHIPS UPDATE ===');
+        }
+
         if (state.phase === 'placement') {
             // При первой расстановке запомним исходный список
             if (!initialPlacement) {
@@ -537,6 +549,17 @@ function renderBattlePanel(containerId, ships, dicePool, playerName) {
     if (!container) return;
 
     container.innerHTML = '';
+    //container.offsetHeight; //Тест: попытка явно перерисовать игровое поле
+
+    console.log(`Rendering battle panel for ${playerName}:`, {
+        shipsCount: ships.length,
+        ships: ships.map(s => ({
+            id: s.id,
+            class: s.shipClass,
+            currentSpeed: s.currentSpeed,
+            currentManeuverability: s.currentManeuverability
+        }))
+    });
 
     // Добавляем панель кубиков только если они есть (боевая фаза)
     if (dicePool) {
@@ -663,6 +686,13 @@ function renderFleetList(container, ships) {
             shipCard.className = 'battle-ship-card clickable';
             shipCard.dataset.shipId = ship.id;
 
+            console.log(`Rendering ship card for ${ship.id}:`, {
+                currentSpeed: ship.currentSpeed,
+                maxSpeed: ship.maxSpeed,
+                currentManeuverability: ship.currentManeuverability,
+                maxManeuverability: ship.maxManeuverability
+            });
+
             // Получаем характеристики из проекта или fallback на classStats
             let displayStats = projectInfo || classStats[ship.shipClass];
 
@@ -677,8 +707,8 @@ function renderFleetList(container, ships) {
             const hpColor = hpPercent > 60 ? '#4CAF50' : hpPercent > 30 ? '#FF9800' : '#F44336';
 
             // Рассчитываем проценты для очков движения
-            const speedPercent = ((ship.currentSpeed || ship.maxSpeed || 0) / (ship.maxSpeed || 1)) * 100;
-            const maneuverPercent = ((ship.currentManeuverability || ship.maxManeuverability || 0) / (ship.maxManeuverability || 1)) * 100;
+            const speedPercent = (ship.currentSpeed / ship.maxSpeed) * 100;
+            const maneuverPercent = (ship.currentManeuverability / ship.maxManeuverability) * 100;
 
             const speedColor = speedPercent > 60 ? '#2196F3' : speedPercent > 30 ? '#FF9800' : '#F44336';
             const maneuverColor = maneuverPercent > 60 ? '#9C27B0' : maneuverPercent > 30 ? '#FF9800' : '#F44336';
@@ -697,16 +727,16 @@ function renderFleetList(container, ships) {
                     <div class="movement-bars">
                         <div class="speed-bar">
                             <div class="speed-fill" style="width: ${speedPercent}%; background-color: ${speedColor}"></div>
-                            <span class="speed-text">${ship.currentSpeed || ship.maxSpeed || 0}/${ship.maxSpeed || 0} Скорость</span>
+                            <span class="speed-text">${ship.currentSpeed}/${ship.maxSpeed} Скорость</span>
                         </div>
                         <div class="maneuver-bar">
                             <div class="maneuver-fill" style="width: ${maneuverPercent}%; background-color: ${maneuverColor}"></div>
-                            <span class="maneuver-text">${ship.currentManeuverability || ship.maxManeuverability || 0}/${ship.maxManeuverability || 0} Манёвр</span>
+                            <span class="maneuver-text">${ship.currentManeuverability}/${ship.maxManeuverability} Манёвр</span>
                         </div>
                     </div>
                     <div class="ship-details">
                         <span>Поз: (${ship.position.q}, ${ship.position.r})</span>
-                        <span>Сп:${ship.currentSpeed || ship.maxSpeed || 0}/${ship.maxSpeed || 0} Мн:${ship.currentManeuverability || ship.maxManeuverability || 0}/${ship.maxManeuverability || 0} Бр:${displayStats.armor}</span>
+                        <span>Бр:${displayStats.armor}</span>
                     </div>
                     ${projectInfo && projectInfo.modules && projectInfo.modules.length > 0 ?
                 `<div class="ship-modules">
