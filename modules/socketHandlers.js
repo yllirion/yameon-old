@@ -764,6 +764,14 @@ module.exports = function(io) {
             console.log(`Movement cost: ${requiredSpeed} speed, ${requiredManeuverability} maneuverability`);
             console.log(`Remaining points: ${ship.currentSpeed}/${ship.maxSpeed} speed, ${ship.currentManeuverability}/${ship.maxManeuverability} maneuverability`);
 
+            console.log('Ship state before sending update:', {
+                id: ship.id,
+                currentSpeed: ship.currentSpeed,
+                maxSpeed: ship.maxSpeed,
+                currentManeuverability: ship.currentManeuverability,
+                maxManeuverability: ship.maxManeuverability
+            });
+
             // Отправляем обновленное состояние
             io.to(`battle_${roomId}`).emit('battleState', b.state);
         });

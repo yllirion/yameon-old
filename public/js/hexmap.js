@@ -322,8 +322,8 @@ function calculateMovementCells(ship, allShips) {
     const seen = new Set();
 
     // Используем текущие очки движения корабля
-    const currentSP = ship.currentSpeed || ship.maxSpeed || 0;
-    const currentMP = ship.currentManeuverability || ship.maxManeuverability || 0;
+    const currentSP = ship.currentSpeed;
+    const currentMP = ship.currentManeuverability;
 
     console.log(`Client: Calculating movement for ship ${ship.id}: SP=${currentSP}, MP=${currentMP}`);
 
