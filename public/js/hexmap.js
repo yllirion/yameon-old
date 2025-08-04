@@ -20,24 +20,15 @@ const CUBE_DIRECTIONS = [
 ];
 
 // Направления в гексагональной сетке (в радианах)
-// Соответствуют кубическим координатам: West, NW, NE, East, SE, SW
+// Исправленное соответствие кубическим координатам
 const HEX_DIRECTIONS = [
-    Math.PI,             // 0: West (лево, 180°)
-    2 * Math.PI / 3,     // 1: Northwest (верх-лево, 120°)
-    Math.PI / 3,         // 2: Northeast (верх-право, 60°)
-    0,                   // 3: East (право, 0°)
-    5 * Math.PI / 3,     // 4: Southeast (низ-право, 300°)
-    4 * Math.PI / 3      // 5: Southwest (низ-лево, 240°)
+    Math.PI,             // 0: West (180°)
+    4 * Math.PI / 3,     // 1: Northwest (240°)
+    5 * Math.PI / 3,     // 2: Northeast (300°)
+    0,                   // 3: East (0°)
+    Math.PI / 3,         // 4: Southeast (60°)
+    2 * Math.PI / 3      // 5: Southwest (120°)
 ];
-
-// Базовые характеристики кораблей для расчета движения
-const SHIP_STATS = {
-    'Фрегат':   { baseMP: 1, baseSP: 3 },
-    'Эсминец':  { baseMP: 1, baseSP: 3 },
-    'Крейсер':  { baseMP: 1, baseSP: 2 },
-    'Линкор':   { baseMP: 1, baseSP: 2 },
-    'Дредноут': { baseMP: 1, baseSP: 1 }
-};
 
 // Маппинг классов кораблей на английские названия для файлов
 const shipClassToIcon = {
@@ -66,7 +57,7 @@ function cubeDistance(a, b) {
     return (Math.abs(a.q - b.q) + Math.abs(a.r - b.r) + Math.abs(a.s - b.s)) / 2;
 }
 
-/** Рисует pointy-top гекс-карту в <svg id="hexmap"> */
+/** Рисует pointy-top гекс-карту в <svg id="hexmap"> используя только кубические координаты */
 export function drawHexGrid() {
     const svg = document.getElementById('hexmap');
     if (!svg) {
@@ -74,27 +65,36 @@ export function drawHexGrid() {
         return;
     }
 
-    const w   = svg.clientWidth;
-    const h   = svg.clientHeight;
+    const w = svg.clientWidth;
+    const h = svg.clientHeight;
     const layout = Layout(layout_pointy, Point(HEX_SIZE, HEX_SIZE), Point(w/2, h/2));
     svg.innerHTML = '';
 
-    for (let col = 0; col < GRID_W; col++) {
-        for (let row = 0; row < GRID_H; row++) {
-            const q = col - Math.floor(GRID_W / 2);
-            const r = row - Math.floor(GRID_H / 2);
+    // Генерируем гексы в кубических координатах
+    const gridRadius = Math.floor(Math.max(GRID_W, GRID_H) / 2);
+
+    for (let q = -gridRadius; q <= gridRadius; q++) {
+        const r1 = Math.max(-gridRadius, -q - gridRadius);
+        const r2 = Math.min(gridRadius, -q + gridRadius);
+
+        for (let r = r1; r <= r2; r++) {
             const s = -q - r;
+
+            // Ограничиваем область видимой карты
+            if (Math.abs(q) > 10 || Math.abs(r) > 10 || Math.abs(s) > 10) continue;
+
             const hex = Hex(q, r, s);
             const pts = polygon_corners(layout, hex)
                 .map(p => `${p.x},${p.y}`)
                 .join(' ');
+
             const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
             poly.setAttribute('points', pts);
             poly.setAttribute('stroke', '#333');
             poly.setAttribute('fill', '#dde');
             poly.setAttribute('stroke-width', '1');
 
-            // Добавляем data-атрибуты для координат
+            // Добавляем data-атрибуты для кубических координат
             poly.setAttribute('data-q', q);
             poly.setAttribute('data-r', r);
             poly.setAttribute('data-s', s);
@@ -115,7 +115,7 @@ export function drawHexGrid() {
         }
     }
 
-    console.log('Hex grid drawn successfully');
+    console.log('Hex grid drawn with cubic coordinates');
 }
 
 function onHexClick(evt) {
@@ -124,9 +124,9 @@ function onHexClick(evt) {
     selectedHex.setAttribute('fill', '#cfc');
 }
 
-/** Рисует все выставленные корабли как SVG элементы */
+/** Рисует все выставленные корабли как SVG элементы используя кубические координаты */
 export function renderPlacedShips(ships) {
-    console.log('Rendering ships:', ships);
+    console.log('Rendering ships with cubic coordinates:', ships);
 
     // Удаляем предыдущие иконки и кнопки
     document.querySelectorAll('.ship-icon, .ship-rotation-controls').forEach(el => el.remove());
@@ -137,13 +137,16 @@ export function renderPlacedShips(ships) {
         return;
     }
 
-    const w   = svg.clientWidth;
-    const h   = svg.clientHeight;
+    const w = svg.clientWidth;
+    const h = svg.clientHeight;
     const layout = Layout(layout_pointy, Point(HEX_SIZE, HEX_SIZE), Point(w/2, h/2));
 
     ships.forEach(ship => {
+        // Прямое использование кубических координат корабля
         const hex = Hex(ship.position.q, ship.position.r, ship.position.s);
         const { x, y } = hex_to_pixel(layout, hex);
+
+        console.log(`Rendering ship ${ship.id} at cubic coords (${ship.position.q}, ${ship.position.r}, ${ship.position.s}) -> pixel (${x}, ${y})`);
 
         // Получаем угол поворота из направления корабля
         const rotation = HEX_DIRECTIONS[ship.dir || 0];
@@ -169,6 +172,19 @@ export function renderPlacedShips(ships) {
         // Добавляем 90 градусов, чтобы корабль по умолчанию смотрел на грань, а не в угол
         const rotationDegrees = (rotation * 180 / Math.PI) + 90;
         group.setAttribute('transform', `translate(${x}, ${y}) rotate(${rotationDegrees})`);
+
+        // Добавляем отладочную информацию о направлении корабля
+        const debugText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        debugText.setAttribute('x', 0);
+        debugText.setAttribute('y', -HEX_SIZE);
+        debugText.setAttribute('text-anchor', 'middle');
+        debugText.setAttribute('font-size', '12');
+        debugText.setAttribute('fill', '#ff0000');
+        debugText.setAttribute('font-weight', 'bold');
+        debugText.textContent = `Dir: ${ship.dir || 0}`;
+        group.appendChild(debugText);
+
+        console.log(`Ship ${ship.id} at dir=${ship.dir}, angle=${rotationDegrees} degrees (${rotation} radians)`);
 
         // Fallback: если картинка не загрузилась, показываем цветной треугольник
         img.onerror = () => {
@@ -205,10 +221,10 @@ export function renderPlacedShips(ships) {
         svg.appendChild(group);
     });
 
-    console.log(`Rendered ${ships.length} ships on the map`);
+    console.log(`Rendered ${ships.length} ships on the map using cubic coordinates`);
 }
 
-/** Добавляет кнопки поворота под кораблем */
+/** Добавляет кнопки поворота под кораблем используя кубические координаты */
 export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onRotate) {
     // В фазе расстановки показываем кнопки для всех своих кораблей
     if (!isCurrentPlayer || !isPlacementPhase) return;
@@ -220,8 +236,11 @@ export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onR
     const h = svg.clientHeight;
     const layout = Layout(layout_pointy, Point(HEX_SIZE, HEX_SIZE), Point(w/2, h/2));
 
+    // Используем кубические координаты корабля напрямую
     const hex = Hex(ship.position.q, ship.position.r, ship.position.s);
     const { x, y } = hex_to_pixel(layout, hex);
+
+    console.log(`Adding rotation controls for ship at cubic coords (${ship.position.q}, ${ship.position.r}, ${ship.position.s}) -> pixel (${x}, ${y})`);
 
     // Создаем группу для кнопок
     const controlGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -237,16 +256,16 @@ export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onR
     const leftCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     leftCircle.setAttribute('cx', x - 20);
     leftCircle.setAttribute('cy', y + HEX_SIZE + 15);
-    leftCircle.setAttribute('r', 12); // Увеличено с 8 до 12
+    leftCircle.setAttribute('r', 12);
     leftCircle.setAttribute('fill', '#2196F3');
     leftCircle.setAttribute('stroke', '#fff');
     leftCircle.setAttribute('stroke-width', 2);
 
     const leftText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     leftText.setAttribute('x', x - 20);
-    leftText.setAttribute('y', y + HEX_SIZE + 20); // Скорректировано под новый размер
+    leftText.setAttribute('y', y + HEX_SIZE + 20);
     leftText.setAttribute('text-anchor', 'middle');
-    leftText.setAttribute('font-size', '14'); // Увеличено с 10 до 14
+    leftText.setAttribute('font-size', '14');
     leftText.setAttribute('font-weight', 'bold');
     leftText.setAttribute('fill', '#fff');
     leftText.textContent = 'L';
@@ -262,16 +281,16 @@ export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onR
     const rightCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     rightCircle.setAttribute('cx', x + 20);
     rightCircle.setAttribute('cy', y + HEX_SIZE + 15);
-    rightCircle.setAttribute('r', 12); // Увеличено с 8 до 12
+    rightCircle.setAttribute('r', 12);
     rightCircle.setAttribute('fill', '#2196F3');
     rightCircle.setAttribute('stroke', '#fff');
     rightCircle.setAttribute('stroke-width', 2);
 
     const rightText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     rightText.setAttribute('x', x + 20);
-    rightText.setAttribute('y', y + HEX_SIZE + 20); // Скорректировано под новый размер
+    rightText.setAttribute('y', y + HEX_SIZE + 20);
     rightText.setAttribute('text-anchor', 'middle');
-    rightText.setAttribute('font-size', '14'); // Увеличено с 10 до 14
+    rightText.setAttribute('font-size', '14');
     rightText.setAttribute('font-weight', 'bold');
     rightText.setAttribute('fill', '#fff');
     rightText.textContent = 'R';
@@ -297,34 +316,41 @@ export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onR
     console.log('Rotation controls added for ship:', ship.id);
 }
 
-/** Расчет доступных ходов для корабля (BFS алгоритм) */
+/** Расчет доступных ходов для корабля с новой логикой маневренности */
 function calculateMovementCells(ship, allShips) {
-    const stats = SHIP_STATS[ship.shipClass] || { baseMP: 1, baseSP: 3 };
     const out = new Set();
     const seen = new Set();
 
-    // Ключ состояния: позиция, направление, SP, MP, последний поворот
-    const stateKey = (pos, dir, sp, mp, lastTurn) => `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${lastTurn}`;
+    // Используем текущие очки движения корабля
+    const currentSP = ship.currentSpeed || ship.maxSpeed || 0;
+    const currentMP = ship.currentManeuverability || ship.maxManeuverability || 0;
+
+    console.log(`Client: Calculating movement for ship ${ship.id}: SP=${currentSP}, MP=${currentMP}`);
+
+    // Ключ состояния: позиция, направление, SP, MP, количество последовательных поворотов
+    const stateKey = (pos, dir, sp, mp, consecutiveTurns) => `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${consecutiveTurns}`;
 
     const queue = [{
         position: ship.position,
         direction: ship.dir,
-        sp: stats.baseSP,  // Speed points
-        mp: stats.baseMP,  // Maneuver points
-        lastTurn: false    // Был ли поворот на последнем шаге
+        sp: currentSP,  // Текущие очки скорости
+        mp: currentMP,  // Текущие очки маневренности
+        consecutiveTurns: 0  // Счетчик последовательных поворотов
     }];
 
-    seen.add(stateKey(ship.position, ship.dir, stats.baseSP, stats.baseMP, false));
+    seen.add(stateKey(ship.position, ship.dir, currentSP, currentMP, 0));
 
     while (queue.length > 0) {
         const state = queue.shift();
 
         // Добавляем позицию в результат (кроме начальной)
-        if (state.position !== ship.position) {
+        if (state.position.q !== ship.position.q ||
+            state.position.r !== ship.position.r ||
+            state.position.s !== ship.position.s) {
             out.add(`${state.position.q},${state.position.r},${state.position.s}`);
         }
 
-        // Движение вперед
+        // Движение вперед (тратит 1 очко скорости, сбрасывает последовательные повороты)
         if (state.sp > 0) {
             const forwardDir = CUBE_DIRECTIONS[state.direction];
             const newPos = cubeAdd(state.position, forwardDir);
@@ -337,8 +363,11 @@ function calculateMovementCells(ship, allShips) {
                 s.position.s === newPos.s
             );
 
-            if (!isOccupied) {
-                const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, false);
+            // Проверяем границы карты
+            const outOfBounds = Math.abs(newPos.q) > 10 || Math.abs(newPos.r) > 10 || Math.abs(newPos.s) > 10;
+
+            if (!isOccupied && !outOfBounds) {
+                const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, 0);
                 if (!seen.has(newStateKey)) {
                     seen.add(newStateKey);
                     queue.push({
@@ -346,17 +375,56 @@ function calculateMovementCells(ship, allShips) {
                         direction: state.direction,
                         sp: state.sp - 1,
                         mp: state.mp,
-                        lastTurn: false
+                        consecutiveTurns: 0  // Движение сбрасывает последовательные повороты
                     });
                 }
             }
         }
 
-        // Повороты (если есть MP и не поворачивались на последнем шаге)
-        if (state.mp > 0 && !state.lastTurn) {
-            for (const turn of [-1, 1]) { // Лево и право
-                const newDir = (state.direction + (turn === -1 ? 1 : 5)) % 6;
-                const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 1, true);
+        // Повороты (новая логика маневренности)
+        if (state.mp > 0) {
+            // Поворот на 60° (1 очко маневренности)
+            if (state.consecutiveTurns === 0 || currentMP >= 2) {  // Можно поворачивать если это первый поворот или у нас достаточно маневренности
+                for (const turn of [-1, 1]) { // Лево и право
+                    const newDir = (state.direction + (turn === -1 ? 1 : 5)) % 6;
+                    const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 1, state.consecutiveTurns + 1);
+
+                    if (!seen.has(newStateKey)) {
+                        seen.add(newStateKey);
+                        queue.push({
+                            position: state.position,
+                            direction: newDir,
+                            sp: state.sp,
+                            mp: state.mp - 1,
+                            consecutiveTurns: state.consecutiveTurns + 1
+                        });
+                    }
+                }
+            }
+
+            // Поворот на 120° (2 очка маневренности)
+            if (state.mp >= 2 && currentMP >= 2) {
+                for (const turn of [-2, 2]) {
+                    const newDir = (state.direction + (turn === -2 ? 2 : 4)) % 6;
+                    const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 2, 0);
+
+                    if (!seen.has(newStateKey)) {
+                        seen.add(newStateKey);
+                        queue.push({
+                            position: state.position,
+                            direction: newDir,
+                            sp: state.sp,
+                            mp: state.mp - 2,
+                            consecutiveTurns: 0  // 120° поворот не считается последовательным
+                        });
+                    }
+                }
+            }
+
+            // Поворот на 180° (3 очка маневренности)
+            if (state.mp >= 3 && currentMP >= 3) {
+                const newDir = (state.direction + 3) % 6;
+                const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 3, 0);
 
                 if (!seen.has(newStateKey)) {
                     seen.add(newStateKey);
@@ -364,8 +432,8 @@ function calculateMovementCells(ship, allShips) {
                         position: state.position,
                         direction: newDir,
                         sp: state.sp,
-                        mp: state.mp - 1,
-                        lastTurn: true
+                        mp: state.mp - 3,
+                        consecutiveTurns: 0  // 180° поворот не считается последовательным
                     });
                 }
             }
@@ -373,10 +441,13 @@ function calculateMovementCells(ship, allShips) {
     }
 
     // Конвертируем результат в массив координат
-    return Array.from(out).map(posStr => {
+    const result = Array.from(out).map(posStr => {
         const [q, r, s] = posStr.split(',').map(Number);
         return { q, r, s };
     });
+
+    console.log(`Client: Movement calculation complete: ${result.length} available cells`);
+    return result;
 }
 
 /** Отображает доступные ходы на карте */
@@ -386,11 +457,17 @@ export function showMovementCells(ship, allShips) {
     // Очищаем предыдущие подсветки
     clearMovementHighlight();
 
-    // Рассчитываем доступные ходы
+    // Рассчитываем доступные ходы с учетом текущих очков движения
     movementCells = calculateMovementCells(ship, allShips);
     selectedShipForMovement = ship;
 
     console.log('Movement cells calculated:', movementCells.length);
+    console.log('Ship movement points:', {
+        currentSpeed: ship.currentSpeed,
+        maxSpeed: ship.maxSpeed,
+        currentManeuverability: ship.currentManeuverability,
+        maxManeuverability: ship.maxManeuverability
+    });
 
     // Подсвечиваем доступные гексы
     highlightMovementCells(movementCells);
@@ -408,13 +485,17 @@ export function clearMovementHighlight() {
     selectedShipForMovement = null;
 }
 
-/** Подсвечивает гексы доступные для движения */
+/** Подсвечивает гексы доступные для движения используя кубические координаты */
 function highlightMovementCells(cells) {
     cells.forEach(cell => {
+        // Ищем полигон по кубическим координатам
         const poly = document.querySelector(`#hexmap polygon[data-q="${cell.q}"][data-r="${cell.r}"][data-s="${cell.s}"]`);
         if (poly) {
             poly.classList.add('movement-available');
             poly.setAttribute('fill', 'rgba(52,211,153,0.3)'); // Зеленоватый цвет
+            console.log(`Highlighted movement cell at cubic coords (${cell.q}, ${cell.r}, ${cell.s})`);
+        } else {
+            console.warn(`Could not find polygon for cubic coords (${cell.q}, ${cell.r}, ${cell.s})`);
         }
     });
 }

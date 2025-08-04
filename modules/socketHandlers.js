@@ -5,6 +5,9 @@ module.exports = function(io) {
     const rooms     = {};   // { roomId: { id, name, players[], statuses, round, currentTurnIndex } }
     const nicknames = {};   // socket.id → nickname
 
+    // Кэш для проектов кораблей
+    let shipProjectsCache = {};
+
     // Направления для кубических координат
     const HEX_DIRECTIONS = [
         { q: -1, r: 0, s: 1 },   // 0: West (left)
@@ -15,7 +18,7 @@ module.exports = function(io) {
         { q: -1, r: 1, s: 0 }    // 5: Southwest (down-left)
     ];
 
-    // Базовые статы по классу корабля
+    // Базовые статы по классу корабля (fallback)
     const classStats = {
         'Фрегат':   { speed:5,  maneuverability:1,  armor:5,  points:4,  activation:2 },
         'Эсминец':  { speed:4,  maneuverability:1,  armor:6,  points:8,  activation:3 },
@@ -24,7 +27,7 @@ module.exports = function(io) {
         'Дредноут': { speed:1,  maneuverability:1,  armor:9,  points:20, activation:6 }
     };
 
-    // Характеристики движения по классам (для BFS алгоритма)
+    // Базовые характеристики движения по классам (fallback)
     const shipMovementStats = {
         'Фрегат':   { baseMP: 1, baseSP: 3 },
         'Эсминец':  { baseMP: 1, baseSP: 3 },
@@ -32,6 +35,97 @@ module.exports = function(io) {
         'Линкор':   { baseMP: 1, baseSP: 2 },
         'Дредноут': { baseMP: 1, baseSP: 1 }
     };
+
+    /**
+     * Загружает проекты кораблей с сервера
+     */
+    async function loadShipProjects() {
+        if (Object.keys(shipProjectsCache).length === 0) {
+            try {
+                const fs = require('fs').promises;
+                const path = require('path');
+
+                const shipsDir = path.join(__dirname, '..', 'public', 'ships');
+                const files = await fs.readdir(shipsDir);
+
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        const filePath = path.join(shipsDir, file);
+                        const content = await fs.readFile(filePath, 'utf8');
+                        const project = JSON.parse(content);
+                        shipProjectsCache[project.id] = project;
+                    }
+                }
+
+                console.log('Ship projects loaded on server:', Object.keys(shipProjectsCache));
+            } catch (error) {
+                console.error('Failed to load ship projects on server:', error);
+            }
+        }
+        return shipProjectsCache;
+    }
+
+    /**
+     * Получает проект корабля по ID
+     */
+    function getShipProject(projectId) {
+        return shipProjectsCache[projectId] || null;
+    }
+
+    /**
+     * Рассчитывает модифицированные характеристики корабля с учетом модулей
+     */
+    function calculateShipStats(shipClass, modules = []) {
+        const project = Object.values(shipProjectsCache).find(p => p.class === shipClass);
+        let baseStats = project || classStats[shipClass];
+
+        // Создаем копию базовых характеристик
+        const modifiedStats = { ...baseStats };
+
+        // Применяем эффекты модулей
+        modules.forEach(module => {
+            if (module.effect.includes('+1 к скорости')) {
+                modifiedStats.speed += 1;
+            } else if (module.effect.includes('-1 к скорости')) {
+                modifiedStats.speed -= 1;
+            } else if (module.effect.includes('+1 к манёвренности')) {
+                modifiedStats.maneuverability += 1;
+            } else if (module.effect.includes('-1 к манёвренности')) {
+                modifiedStats.maneuverability -= 1;
+            } else if (module.effect.includes('+1 к броне')) {
+                modifiedStats.armor += 1;
+            } else if (module.effect.includes('-1 к броне')) {
+                modifiedStats.armor -= 1;
+            }
+        });
+
+        return modifiedStats;
+    }
+
+    /**
+     * Рассчитывает характеристики движения корабля с учетом проекта и модулей
+     */
+    function calculateMovementStats(projectId, shipClass) {
+        const project = getShipProject(projectId);
+
+        // Используем данные из проекта или fallback на константы класса
+        let baseStats = project || classStats[shipClass];
+        let movementStats = shipMovementStats[shipClass];
+
+        if (project && project.modules) {
+            // Модифицируем характеристики движения на основе модулей
+            const modifiedStats = calculateShipStats(shipClass, project.modules);
+
+            // Пересчитываем характеристики движения на основе модифицированной скорости и манёвренности
+            // Это простая логика, можно усложнить при необходимости
+            movementStats = {
+                baseMP: Math.max(1, modifiedStats.maneuverability),
+                baseSP: Math.max(1, Math.floor(modifiedStats.speed / 2) + 1)
+            };
+        }
+
+        return movementStats;
+    }
 
     // Вспомогательные функции для кубических координат
     function cubeAdd(a, b) {
@@ -70,25 +164,50 @@ module.exports = function(io) {
     }
 
     /**
-     * Расчет доступных ходов для корабля (BFS алгоритм)
+     * Восстанавливает очки движения для всех кораблей игрока
+     */
+    function restoreMovementPoints(ships, playerId) {
+        ships.forEach(ship => {
+            if (ship.owner === playerId) {
+                // Получаем актуальные характеристики с учетом проекта и модулей
+                const project = getShipProject(ship.projectId);
+                const stats = project ? calculateShipStats(ship.shipClass, project.modules || []) : classStats[ship.shipClass];
+
+                ship.currentSpeed = stats.speed;
+                ship.currentManeuverability = stats.maneuverability;
+                ship.maxSpeed = stats.speed;
+                ship.maxManeuverability = stats.maneuverability;
+
+                console.log(`Restored movement points for ship ${ship.id}: Speed ${ship.currentSpeed}/${ship.maxSpeed}, Maneuverability ${ship.currentManeuverability}/${ship.maxManeuverability}`);
+            }
+        });
+    }
+
+    /**
+     * Расчет доступных ходов для корабля с правильной логикой маневренности
      */
     function calculateMovementCells(ship, allShips) {
-        const stats = shipMovementStats[ship.shipClass] || { baseMP: 1, baseSP: 3 };
         const out = new Set();
         const seen = new Set();
 
-        // Ключ состояния: позиция, направление, SP, MP, последний поворот
-        const stateKey = (pos, dir, sp, mp, lastTurn) => `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${lastTurn}`;
+        // Используем текущие очки движения корабля
+        const currentSP = ship.currentSpeed || ship.maxSpeed || 0;
+        const currentMP = ship.currentManeuverability || ship.maxManeuverability || 0;
+
+        console.log(`Calculating movement for ship ${ship.id}: SP=${currentSP}, MP=${currentMP}`);
+
+        // Ключ состояния: позиция, направление, SP, MP, количество последовательных поворотов
+        const stateKey = (pos, dir, sp, mp, consecutiveTurns) => `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${consecutiveTurns}`;
 
         const queue = [{
             position: ship.position,
             direction: ship.dir,
-            sp: stats.baseSP,  // Speed points
-            mp: stats.baseMP,  // Maneuver points
-            lastTurn: false    // Был ли поворот на последнем шаге
+            sp: currentSP,  // Текущие очки скорости
+            mp: currentMP,  // Текущие очки маневренности
+            consecutiveTurns: 0  // Счетчик последовательных поворотов
         }];
 
-        seen.add(stateKey(ship.position, ship.dir, stats.baseSP, stats.baseMP, false));
+        seen.add(stateKey(ship.position, ship.dir, currentSP, currentMP, 0));
 
         while (queue.length > 0) {
             const state = queue.shift();
@@ -100,7 +219,7 @@ module.exports = function(io) {
                 out.add(`${state.position.q},${state.position.r},${state.position.s}`);
             }
 
-            // Движение вперед
+            // Движение вперед (тратит 1 очко скорости, сбрасывает последовательные повороты)
             if (state.sp > 0) {
                 const forwardDir = HEX_DIRECTIONS[state.direction];
                 const newPos = cubeAdd(state.position, forwardDir);
@@ -113,11 +232,11 @@ module.exports = function(io) {
                     s.position.s === newPos.s
                 );
 
-                // Проверяем границы карты (примерно -10 до +10)
+                // Проверяем границы карты
                 const outOfBounds = Math.abs(newPos.q) > 10 || Math.abs(newPos.r) > 10 || Math.abs(newPos.s) > 10;
 
                 if (!isOccupied && !outOfBounds) {
-                    const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, false);
+                    const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, 0);
                     if (!seen.has(newStateKey)) {
                         seen.add(newStateKey);
                         queue.push({
@@ -125,17 +244,56 @@ module.exports = function(io) {
                             direction: state.direction,
                             sp: state.sp - 1,
                             mp: state.mp,
-                            lastTurn: false
+                            consecutiveTurns: 0  // Движение сбрасывает последовательные повороты
                         });
                     }
                 }
             }
 
-            // Повороты (если есть MP и не поворачивались на последнем шаге)
-            if (state.mp > 0 && !state.lastTurn) {
-                for (const turn of [-1, 1]) { // Лево и право
-                    const newDir = (state.direction + (turn === -1 ? 1 : 5)) % 6;
-                    const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 1, true);
+            // Повороты (новая логика маневренности)
+            if (state.mp > 0) {
+                // Поворот на 60° (1 очко маневренности)
+                if (state.consecutiveTurns === 0 || currentMP >= 2) {  // Можно поворачивать если это первый поворот или у нас достаточно маневренности
+                    for (const turn of [-1, 1]) { // Лево и право
+                        const newDir = (state.direction + (turn === -1 ? 1 : 5)) % 6;
+                        const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 1, state.consecutiveTurns + 1);
+
+                        if (!seen.has(newStateKey)) {
+                            seen.add(newStateKey);
+                            queue.push({
+                                position: state.position,
+                                direction: newDir,
+                                sp: state.sp,
+                                mp: state.mp - 1,
+                                consecutiveTurns: state.consecutiveTurns + 1
+                            });
+                        }
+                    }
+                }
+
+                // Поворот на 120° (2 очка маневренности)
+                if (state.mp >= 2 && currentMP >= 2) {
+                    for (const turn of [-2, 2]) {
+                        const newDir = (state.direction + (turn === -2 ? 2 : 4)) % 6;
+                        const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 2, 0);
+
+                        if (!seen.has(newStateKey)) {
+                            seen.add(newStateKey);
+                            queue.push({
+                                position: state.position,
+                                direction: newDir,
+                                sp: state.sp,
+                                mp: state.mp - 2,
+                                consecutiveTurns: 0  // 120° поворот не считается последовательным
+                            });
+                        }
+                    }
+                }
+
+                // Поворот на 180° (3 очка маневренности)
+                if (state.mp >= 3 && currentMP >= 3) {
+                    const newDir = (state.direction + 3) % 6;
+                    const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 3, 0);
 
                     if (!seen.has(newStateKey)) {
                         seen.add(newStateKey);
@@ -143,8 +301,8 @@ module.exports = function(io) {
                             position: state.position,
                             direction: newDir,
                             sp: state.sp,
-                            mp: state.mp - 1,
-                            lastTurn: true
+                            mp: state.mp - 3,
+                            consecutiveTurns: 0  // 180° поворот не считается последовательным
                         });
                     }
                 }
@@ -152,16 +310,22 @@ module.exports = function(io) {
         }
 
         // Конвертируем результат в массив координат
-        return Array.from(out).map(posStr => {
+        const result = Array.from(out).map(posStr => {
             const [q, r, s] = posStr.split(',').map(Number);
             return { q, r, s };
         });
+
+        console.log(`Movement calculation complete: ${result.length} available cells`);
+        return result;
     }
 
     /**
      * Инициализация placement-фазы и раздача начального состояния
      */
-    function startBattle(roomId) {
+    async function startBattle(roomId) {
+        // Загружаем проекты кораблей перед началом боя
+        await loadShipProjects();
+
         const room = rooms[roomId];
         const fleets = Object.entries(room.battle.fleets); // [ [socketId, fleet], … ]
 
@@ -259,10 +423,15 @@ module.exports = function(io) {
     }
 
     /**
-     * Вычисляет направление движения корабля
+     * Вычисляет направление движения корабля с отладочными логами
      */
     function getDirectionToTarget(from, to) {
         const diff = cubeAdd(to, { q: -from.q, r: -from.r, s: -from.s });
+
+        console.log(`=== getDirectionToTarget DEBUG ===`);
+        console.log(`From: (${from.q}, ${from.r}, ${from.s})`);
+        console.log(`To: (${to.q}, ${to.r}, ${to.s})`);
+        console.log(`Diff vector: (${diff.q}, ${diff.r}, ${diff.s})`);
 
         // Находим ближайшее направление
         let bestDir = 0;
@@ -271,14 +440,25 @@ module.exports = function(io) {
         for (let i = 0; i < 6; i++) {
             const dir = HEX_DIRECTIONS[i];
             const dot = diff.q * dir.q + diff.r * dir.r + diff.s * dir.s;
+
+            console.log(`Direction ${i} (${dir.q}, ${dir.r}, ${dir.s}): dot product = ${dot}`);
+
             if (dot > bestDot) {
                 bestDot = dot;
                 bestDir = i;
+                console.log(`  -> New best direction: ${i} with dot = ${dot}`);
             }
         }
 
+        const directionNames = ['West', 'Northwest', 'Northeast', 'East', 'Southeast', 'Southwest'];
+        console.log(`Final result: direction ${bestDir} (${directionNames[bestDir]}) with dot = ${bestDot}`);
+        console.log(`=== END DEBUG ===`);
+
         return bestDir;
     }
+
+    // Загружаем проекты кораблей при запуске сервера
+    loadShipProjects();
 
     io.on('connection', socket => {
         console.log('Player connected:', socket.id);
@@ -411,7 +591,11 @@ module.exports = function(io) {
                 pending.splice(pending.indexOf(item), 1);
             }
 
-            // Добавляем корабль на поле
+            // Получаем проект корабля для правильных характеристик
+            const project = getShipProject(projectId);
+            const stats = project || classStats[item.shipClass];
+
+            // Добавляем корабль на поле с правильными характеристиками
             const newShip = {
                 id:        `${socket.id}_${projectId}_${Date.now()}`,
                 owner:     socket.id,
@@ -419,15 +603,17 @@ module.exports = function(io) {
                 projectId,
                 position,
                 dir:       0,  // Направление корабля по умолчанию
-                hp:        classStats[item.shipClass].activation,
-                modules:   []
+                hp:        stats.activation, // Используем activation из проекта!
+                modules:   project ? project.modules || [] : [],
+                // Добавляем поля для текущих очков движения
+                currentSpeed: stats.speed,
+                currentManeuverability: stats.maneuverability,
+                maxSpeed: stats.speed,
+                maxManeuverability: stats.maneuverability
             };
 
             b.state.ships.push(newShip);
-            console.log('Ship placed:', newShip);
-
-            // НОВАЯ ЛОГИКА: НЕ переключаем ход автоматически!
-            // Игрок должен сам нажать "End Turn" когда закончит расстановку
+            console.log('Ship placed with correct stats:', newShip);
 
             // Разослать обновлённый state
             console.log('Sending updated battleState');
@@ -479,7 +665,7 @@ module.exports = function(io) {
         });
 
         /**
-         * Движение корабля в боевой фазе
+         * Движение корабля в боевой фазе с тратой очков
          */
         socket.on('moveShip', ({ roomId, shipId, targetPosition }) => {
             console.log('moveShip received:', { roomId, shipId, targetPosition });
@@ -528,25 +714,55 @@ module.exports = function(io) {
                 return;
             }
 
-            // Проверяем валидность движения с использованием BFS алгоритма
+            // Проверяем валидность движения
             if (!isValidMovement(ship, targetPosition, b.state.ships)) {
                 console.log('Invalid movement - not reachable');
                 socket.emit('movementError', { message: 'Недоступная позиция для движения' });
                 return;
             }
 
-            // Вычисляем новое направление корабля
+            // Рассчитываем стоимость движения
             const distance = cubeDistance(ship.position, targetPosition);
-            if (distance > 1) {
-                // Для движения на несколько гексов поворачиваем корабль в сторону движения
-                ship.dir = getDirectionToTarget(ship.position, targetPosition);
+            const requiredSpeed = distance;
+
+            // Проверяем достаточность очков скорости
+            if (ship.currentSpeed < requiredSpeed) {
+                socket.emit('movementError', { message: 'Недостаточно очков скорости' });
+                return;
+            }
+
+            // Вычисляем поворот и его стоимость
+            let requiredManeuverability = 0;
+            if (distance > 0) {
+                const targetDirection = getDirectionToTarget(ship.position, targetPosition);
+                const directionDiff = Math.abs(targetDirection - ship.dir);
+                const actualDiff = Math.min(directionDiff, 6 - directionDiff); // Кратчайший поворот
+
+                if (actualDiff === 1) requiredManeuverability = 1;      // 60°
+                else if (actualDiff === 2) requiredManeuverability = 2; // 120°
+                else if (actualDiff === 3) requiredManeuverability = 3; // 180°
+
+                // Проверяем достаточность очков маневренности
+                if (ship.currentManeuverability < requiredManeuverability) {
+                    socket.emit('movementError', { message: 'Недостаточно очков маневренности для поворота' });
+                    return;
+                }
+
+                // Поворачиваем корабль
+                ship.dir = targetDirection;
             }
 
             // Обновляем позицию корабля
             const oldPosition = { ...ship.position };
             ship.position = targetPosition;
 
+            // Тратим очки движения
+            ship.currentSpeed -= requiredSpeed;
+            ship.currentManeuverability -= requiredManeuverability;
+
             console.log(`Ship ${shipId} moved from (${oldPosition.q},${oldPosition.r},${oldPosition.s}) to (${targetPosition.q},${targetPosition.r},${targetPosition.s})`);
+            console.log(`Movement cost: ${requiredSpeed} speed, ${requiredManeuverability} maneuverability`);
+            console.log(`Remaining points: ${ship.currentSpeed}/${ship.maxSpeed} speed, ${ship.currentManeuverability}/${ship.maxManeuverability} maneuverability`);
 
             // Отправляем обновленное состояние
             io.to(`battle_${roomId}`).emit('battleState', b.state);
@@ -626,6 +842,10 @@ module.exports = function(io) {
                 console.log('Switching turn from', nicknames[socket.id], 'to', nicknames[otherPlayer]);
 
                 battleState.currentPlayer = otherPlayer;
+
+                // Восстанавливаем очки движения для нового активного игрока
+                console.log('Restoring movement points for player:', nicknames[otherPlayer]);
+                restoreMovementPoints(battleState.ships, otherPlayer);
 
                 // Проверяем, нужно ли начать новый раунд
                 const isNewRound = battleState.currentPlayer === room.players[0];

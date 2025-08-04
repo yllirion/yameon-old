@@ -1,0 +1,13 @@
+{
+  "id": "fleet_1754227018689",
+  "name": "Для тестов",
+  "faction": "Федерация",
+  "createdBy": "Player_ZO98T",
+  "composition": [
+    {
+      "shipClass": "Фрегат",
+      "projectId": "ship006",
+      "count": 1
+    }
+  ]
+}

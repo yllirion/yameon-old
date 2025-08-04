@@ -226,9 +226,6 @@ function setupBattleClickHandlers(state, socket, playerId) {
 export function initBattleUI(showView, socket, playerId) {
     console.log('Initializing battle UI for player:', playerId);
 
-    // Загружаем проекты кораблей
-    loadShipProjects();
-
     // Добавляем CSS стили для поворота кораблей и движения
     addBattleStyles();
 
@@ -262,7 +259,7 @@ export function initBattleUI(showView, socket, playerId) {
         logBattle(`Ход переходит к ${currentPlayerNick}. Раунд ${round}`);
     });
 
-    socket.on('battleState', state => {
+    socket.on('battleState', async state => {
         console.log('[battleState received]', state);
 
         // Сохраняем roomId локально
@@ -281,7 +278,7 @@ export function initBattleUI(showView, socket, playerId) {
             });
             lastShips = state.ships.slice();
 
-            renderPlacement(state, showView, socket, playerId);
+            await renderPlacement(state, showView, socket, playerId);
         }
         else if (state.phase === 'battle') {
             // сбросим данные placement
@@ -290,7 +287,7 @@ export function initBattleUI(showView, socket, playerId) {
                 lastShips = [];
                 logBattle(`Фаза: Бой начался! Раунд ${state.round}`);
             }
-            renderBattle(state, showView, socket, playerId);
+            await renderBattle(state, showView, socket, playerId);
         }
     });
 
@@ -304,8 +301,12 @@ export function initBattleUI(showView, socket, playerId) {
 }
 
 /** Рендер фазы расстановки */
-function renderPlacement(state, showView, socket, playerId) {
+async function renderPlacement(state, showView, socket, playerId) {
     console.log('Rendering placement phase');
+
+    // Загружаем проекты кораблей перед рендерингом
+    await loadShipProjects();
+
     showView('battle');
 
     // Рисуем сетку и иконки уже выставленных кораблей
@@ -428,18 +429,23 @@ function renderPlacementLists(state, playerId) {
         groups.forEach(group => {
             const { shipClass, projectId, count } = group;
             const projectName = getProjectName(projectId);
+            const projectInfo = getProjectInfo(projectId);
 
             for (let i = 0; i < count; i++) {
                 const card = document.createElement('div');
                 card.className = 'ship-card';
                 card.dataset.projectId = projectId;
+
+                // Используем характеристики из проекта, если доступны, иначе fallback на classStats
+                let displayStats = projectInfo || classStats[shipClass];
+
                 card.innerHTML = `
                     <h4>${projectName}</h4>
                     <p class="ship-class-badge">${shipClass}</p>
-                    <p>Сп:${classStats[shipClass].speed}
-                       Мн:${classStats[shipClass].maneuverability}
-                       Бр:${classStats[shipClass].armor}
-                       Ак:${classStats[shipClass].activation}</p>
+                    <p>Сп:${displayStats.speed}
+                       Мн:${displayStats.maneuverability}
+                       Бр:${displayStats.armor}
+                       Ак:${displayStats.activation}</p>
                 `;
 
                 // кликабельны только ваши нерасставленные
@@ -465,8 +471,12 @@ function renderPlacementLists(state, playerId) {
 }
 
 /** Рендер основной боевой фазы */
-function renderBattle(state, showView, socket, playerId) {
+async function renderBattle(state, showView, socket, playerId) {
     console.log('Rendering battle phase');
+
+    // Загружаем проекты кораблей перед рендерингом
+    await loadShipProjects();
+
     showView('battle');
 
     // Сетка и иконки
@@ -609,9 +619,6 @@ function renderFleetList(container, ships) {
         return;
     }
 
-    // Загружаем проекты кораблей перед отображением
-    loadShipProjects();
-
     // Группируем по проекту, а не только по классу
     const groups = ships.reduce((acc, ship) => {
         const key = `${ship.shipClass}_${ship.projectId}`;
@@ -656,17 +663,25 @@ function renderFleetList(container, ships) {
             shipCard.className = 'battle-ship-card clickable';
             shipCard.dataset.shipId = ship.id;
 
-            // Правильный расчет maxHP через активацию
-            const maxHP = classStats[ship.shipClass].activation;
+            // Получаем характеристики из проекта или fallback на classStats
+            let displayStats = projectInfo || classStats[ship.shipClass];
+
+            // Если у проекта есть модули, рассчитываем модифицированные характеристики
+            if (projectInfo && projectInfo.modules && projectInfo.modules.length > 0) {
+                displayStats = calculateModifiedStats(ship.shipClass, projectInfo.modules);
+            }
+
+            // Правильный расчет maxHP через активацию из проекта или классовых констант
+            const maxHP = displayStats.activation;
             const hpPercent = (ship.hp / maxHP) * 100;
             const hpColor = hpPercent > 60 ? '#4CAF50' : hpPercent > 30 ? '#FF9800' : '#F44336';
 
-            // Получаем характеристики проекта (если есть модификации)
-            let displayStats = classStats[ship.shipClass];
-            if (projectInfo && projectInfo.modules && projectInfo.modules.length > 0) {
-                // Если у проекта есть модули, показываем модифицированные характеристики
-                displayStats = calculateModifiedStats(ship.shipClass, projectInfo.modules);
-            }
+            // Рассчитываем проценты для очков движения
+            const speedPercent = ((ship.currentSpeed || ship.maxSpeed || 0) / (ship.maxSpeed || 1)) * 100;
+            const maneuverPercent = ((ship.currentManeuverability || ship.maxManeuverability || 0) / (ship.maxManeuverability || 1)) * 100;
+
+            const speedColor = speedPercent > 60 ? '#2196F3' : speedPercent > 30 ? '#FF9800' : '#F44336';
+            const maneuverColor = maneuverPercent > 60 ? '#9C27B0' : maneuverPercent > 30 ? '#FF9800' : '#F44336';
 
             shipCard.innerHTML = `
                 <div class="ship-card-header">
@@ -679,9 +694,19 @@ function renderFleetList(container, ships) {
                         <div class="hp-fill" style="width: ${hpPercent}%; background-color: ${hpColor}"></div>
                         <span class="hp-text">${ship.hp}/${maxHP} HP</span>
                     </div>
+                    <div class="movement-bars">
+                        <div class="speed-bar">
+                            <div class="speed-fill" style="width: ${speedPercent}%; background-color: ${speedColor}"></div>
+                            <span class="speed-text">${ship.currentSpeed || ship.maxSpeed || 0}/${ship.maxSpeed || 0} Скорость</span>
+                        </div>
+                        <div class="maneuver-bar">
+                            <div class="maneuver-fill" style="width: ${maneuverPercent}%; background-color: ${maneuverColor}"></div>
+                            <span class="maneuver-text">${ship.currentManeuverability || ship.maxManeuverability || 0}/${ship.maxManeuverability || 0} Манёвр</span>
+                        </div>
+                    </div>
                     <div class="ship-details">
                         <span>Поз: (${ship.position.q}, ${ship.position.r})</span>
-                        <span>Сп:${displayStats.speed} Мн:${displayStats.maneuverability} Бр:${displayStats.armor}</span>
+                        <span>Сп:${ship.currentSpeed || ship.maxSpeed || 0}/${ship.maxSpeed || 0} Мн:${ship.currentManeuverability || ship.maxManeuverability || 0}/${ship.maxManeuverability || 0} Бр:${displayStats.armor}</span>
                     </div>
                     ${projectInfo && projectInfo.modules && projectInfo.modules.length > 0 ?
                 `<div class="ship-modules">

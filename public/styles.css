@@ -330,6 +330,38 @@ input, select {
     text-shadow: 1px 1px 1px rgba(255,255,255,0.5);
 }
 
+/* === Новые стили для полосок движения === */
+.movement-bars {
+    margin-bottom: 4px;
+}
+
+.speed-bar, .maneuver-bar {
+    position: relative;
+    height: 12px;
+    background: #eee;
+    border-radius: 6px;
+    margin-bottom: 2px;
+    overflow: hidden;
+}
+
+.speed-fill, .maneuver-fill {
+    height: 100%;
+    transition: width 0.3s;
+    border-radius: 6px;
+}
+
+.speed-text, .maneuver-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.6em;
+    font-weight: bold;
+    color: #333;
+    text-shadow: 1px 1px 1px rgba(255,255,255,0.5);
+    white-space: nowrap;
+}
+
 .ship-details {
     display: flex;
     justify-content: space-between;
