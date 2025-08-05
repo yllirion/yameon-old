@@ -653,9 +653,11 @@ module.exports = function(io) {
 
             // Поворачиваем корабль
             if (direction === 'left') {
-                ship.dir = (ship.dir + 1) % 6; // Поворот ВЛЕВО = увеличение направления
+//                ship.dir = (ship.dir + 1) % 6; // Поворот ВЛЕВО = увеличение направления
+                  ship.dir = (ship.dir + 5) % 6;
             } else if (direction === 'right') {
-                ship.dir = (ship.dir + 5) % 6; // Поворот ВПРАВО = уменьшение направления (-1 с учетом модуля)
+//                ship.dir = (ship.dir + 5) % 6; // Поворот ВПРАВО = уменьшение направления (-1 с учетом модуля)
+                  ship.dir = (ship.dir + 1) % 6;
             }
 
             console.log(`Ship ${shipId} rotated to direction ${ship.dir}`);

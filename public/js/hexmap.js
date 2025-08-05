@@ -101,11 +101,25 @@ export function drawHexGrid() {
 
             // Добавляем hover эффект
             poly.addEventListener('mouseenter', () => {
+                if (poly.classList.contains('movement-available') ||
+                    poly.classList.contains('weapon-arc-highlight')) {
+                    return;
+                }
+
                 if (poly !== selectedHex) {
                     poly.setAttribute('fill', '#ccf');
                 }
             });
             poly.addEventListener('mouseleave', () => {
+                if (poly.classList.contains('movement-available')) {
+                    poly.setAttribute('fill', 'rgba(52,211,153,0.3)');
+                    return;
+                }
+                if (poly.classList.contains('weapon-arc-highlight')) {
+                    poly.setAttribute('fill', 'rgba(239, 68, 68, 0.3)');
+                    return;
+                }
+
                 if (poly !== selectedHex) {
                     poly.setAttribute('fill', '#dde');
                 }
