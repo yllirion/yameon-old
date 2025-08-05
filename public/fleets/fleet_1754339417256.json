@@ -1,0 +1,18 @@
+{
+  "id": "fleet_1754339417256",
+  "name": "Kai 3",
+  "faction": "Империя",
+  "createdBy": "Player_g_Kcl",
+  "composition": [
+    {
+      "shipClass": "Линкор",
+      "projectId": "ship004",
+      "count": 1
+    },
+    {
+      "shipClass": "Крейсер",
+      "projectId": "ship003",
+      "count": 1
+    }
+  ]
+}

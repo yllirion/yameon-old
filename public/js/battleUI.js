@@ -11,6 +11,8 @@ import {
     getSelectedShipForMovement
 } from './hexmap.js';
 
+import { initCombatSystem, testCombatSystem } from './combat.js';
+
 /** Базовые характеристики по классу – используется для карточек и логов */
 const classStats = {
     'Фрегат':   { speed: 5, maneuverability: 1, armor: 5, activation: 2 },
@@ -185,7 +187,8 @@ function setupBattleClickHandlers(state, socket, playerId) {
             shipIcon.oncontextmenu = (e) => {
                 e.preventDefault();
                 console.log('Right click on ship:', shipId);
-                logBattle(`Область стрельбы для ${ship.shipClass} (функция в разработке)`);
+                testCombatSystem(ship, state.ships);
+                logBattle(`Боевой режим для ${ship.shipClass}`);
             };
         }
     });
@@ -228,6 +231,8 @@ export function initBattleUI(showView, socket, playerId) {
 
     // Добавляем CSS стили для поворота кораблей и движения
     addBattleStyles();
+
+    initCombatSystem(socket, playerId);
 
     // Отписываем старые слушатели
     socket.off('startGame');
