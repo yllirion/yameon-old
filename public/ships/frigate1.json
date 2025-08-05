@@ -4,7 +4,7 @@
   "class": "Фрегат",
   "modules": [
   ],
-  "speed": 5,
+  "speed": 3,
   "maneuverability": 1,
   "armor": 5,
   "points": 4,

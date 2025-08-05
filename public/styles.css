@@ -521,12 +521,15 @@ input, select {
 
 .rotation-button:hover {
     transform: scale(1.1);
-    transition: transform 0.2s;
 }
 
 .rotation-button {
-    transition: transform 0.2s;
     cursor: pointer;
+    transition: transform 0.2s;
+    /* Для SVG: область, по которой считается box для трансформации */
+    transform-box: fill-box;
+    /* Ось трансформации — по центру этой области */
+    transform-origin: center center;
 }
 
 .ship-icon {

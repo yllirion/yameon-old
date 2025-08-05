@@ -72,26 +72,29 @@ export function calculateWeaponArc(ship, weapon) {
 
         case 'standard':
             // Стандартная дуга - конус вперед
-            for (let dist = 1; dist <= range; dist++) {
-                // Центральная линия
+            // Используем алгоритм из hex-game.js для более естественного конуса
+            for (let t = 1; t <= range; t++) {
+                // Центральная точка на расстоянии t
                 const center = {
-                    q: position.q + mainDir.q * dist,
-                    r: position.r + mainDir.r * dist,
-                    s: position.s + mainDir.s * dist
+                    q: position.q + mainDir.q * t,
+                    r: position.r + mainDir.r * t,
+                    s: position.s + mainDir.s * t
                 };
                 cells.push(center);
 
-                // Боковые линии с расширением
-                for (let side = 1; side <= Math.min(dist, 2); side++) {
+                // Боковые точки - чем дальше от корабля, тем уже конус
+                for (let i = 1; i <= range - t; i++) {
+                    // Левая сторона конуса
                     cells.push({
-                        q: center.q + leftDir.q * side,
-                        r: center.r + leftDir.r * side,
-                        s: center.s + leftDir.s * side
+                        q: center.q + leftDir.q * i,
+                        r: center.r + leftDir.r * i,
+                        s: center.s + leftDir.s * i
                     });
+                    // Правая сторона конуса
                     cells.push({
-                        q: center.q + rightDir.q * side,
-                        r: center.r + rightDir.r * side,
-                        s: center.s + rightDir.s * side
+                        q: center.q + rightDir.q * i,
+                        r: center.r + rightDir.r * i,
+                        s: center.s + rightDir.s * i
                     });
                 }
             }
@@ -139,6 +142,9 @@ export function calculateWeaponArc(ship, weapon) {
                     s: position.s + rightDir.s * dist
                 });
             }
+            break;
+
+        case 'тестируем':
             break;
     }
 
@@ -337,10 +343,10 @@ function addCombatStyles() {
             position: absolute;
             background: rgba(0, 0, 0, 0.9);
             border: 2px solid #ef4444;
-            border-radius: 8px;
+            border-radius: 2px;
             padding: 0;
             pointer-events: auto;
-            min-width: 280px;
+            min-width: 140px;
             box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
         }
         
@@ -356,12 +362,12 @@ function addCombatStyles() {
         .overlay-header h4 {
             margin: 0;
             color: white;
-            font-size: 16px;
+            font-size: 10px;
         }
         
         .close-btn {
             color: white;
-            font-size: 24px;
+            font-size: 16px;
             cursor: pointer;
             line-height: 1;
         }
@@ -371,7 +377,7 @@ function addCombatStyles() {
         }
         
         .overlay-content {
-            padding: 15px;
+            padding: 8px;
         }
         
         .target-info {
@@ -379,7 +385,7 @@ function addCombatStyles() {
             justify-content: space-between;
             margin-bottom: 15px;
             color: #fbbf24;
-            font-size: 14px;
+            font-size: 10px;
         }
         
         .weapons-list {
