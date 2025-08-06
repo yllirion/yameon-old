@@ -26,6 +26,8 @@ let selectedShipToPlace = null;
 let initialPlacement    = null;
 let lastShips           = [];
 let currentBattleRoomId = null;
+let lastBattleState = null;
+let currentPlayerId = null;
 
 // Кэш для проектов кораблей
 let shipProjectsCache = {};
@@ -161,6 +163,14 @@ function setupBattleClickHandlers(state, socket, playerId) {
         const ship = state.ships.find(s => s.id === shipId);
 
         if (ship && ship.owner === playerId && state.currentPlayer === playerId) {
+            if (ship.status === 'activated') {
+                // Для активированного корабля - движение и кнопка завершения
+                shipIcon.style.cursor = 'pointer';
+
+
+            }
+        }
+        if (ship && ship.owner === playerId && state.currentPlayer === playerId) {
             shipIcon.style.cursor = 'pointer';
 
             // Левый клик - показать область движения
@@ -226,8 +236,13 @@ function setupBattleClickHandlers(state, socket, playerId) {
 }
 
 /** Инициализация боевого UI */
+let globalSocket = null;
+
 export function initBattleUI(showView, socket, playerId) {
+    globalSocket = socket; // Сохраняем socket глобально
+    currentPlayerId = playerId;
     console.log('Initializing battle UI for player:', playerId);
+
 
     // Добавляем CSS стили для поворота кораблей и движения
     addBattleStyles();
@@ -266,6 +281,8 @@ export function initBattleUI(showView, socket, playerId) {
 
     socket.on('battleState', async state => {
         console.log('[battleState received]', state);
+
+        lastBattleState = state;
 
         // Сохраняем roomId локально
         currentBattleRoomId = state.id;
@@ -311,6 +328,14 @@ export function initBattleUI(showView, socket, playerId) {
     socket.on('gameOver', ({ loser }) => {
         logBattle(`Игрок ${loser} сдался — игра окончена`);
         showView('lobby');
+    });
+
+    socket.on('shipActivated', ({ shipId, shipClass, playerNick, diceValue }) => {
+        logBattle(`${playerNick} активировал ${shipClass} кубиком ${diceValue}`);
+    });
+
+    socket.on('activationError', ({ message }) => {
+        logBattle(`Ошибка активации: ${message}`);
     });
 
     // Настраиваем кнопки боевого интерфейса
@@ -601,6 +626,11 @@ function renderDicePool(container, dicePool, playerName) {
         diceSlot.className = `dice-slot ${count > 0 ? 'has-dice' : 'empty'}`;
         diceSlot.dataset.value = value;
 
+        if (count > 0 && container.id === 'player1Ships') {
+            diceSlot.style.cursor = 'pointer';
+            diceSlot.onclick = () => handleDiceClick(value);
+        }
+
         // Особое оформление для единиц (специальные кубы)
         if (value === 1 && count > 0) {
             diceSlot.classList.add('special-dice');
@@ -637,8 +667,55 @@ function renderDicePool(container, dicePool, playerName) {
     container.appendChild(dicePanel);
 }
 
+let selectedDiceValue = null;
+
+function handleDiceClick(diceValue) {
+    console.log('Dice clicked:', diceValue);
+
+    // Убираем предыдущее выделение
+    document.querySelectorAll('.dice-slot.selected').forEach(slot => {
+        slot.classList.remove('selected');
+    });
+
+    // Выделяем выбранный кубик
+    const clickedSlot = document.querySelector(`.dice-slot[data-value="${diceValue}"]`);
+    if (clickedSlot) {
+        clickedSlot.classList.add('selected');
+    }
+
+    selectedDiceValue = diceValue;
+
+    // Подсвечиваем корабли, которые можно активировать этим кубиком
+    highlightActivatableShips(diceValue);
+
+    logBattle(`Выбран кубик: ${diceValue}`);
+}
+
+function highlightActivatableShips(diceValue) {
+    document.querySelectorAll('.battle-ship-card').forEach(card => {
+        card.classList.remove('can-activate');
+    });
+
+    // Находим корабли, которые можно активировать
+    const ships = lastBattleState.ships.filter(ship =>
+        ship.owner === currentPlayerId &&  // <-- исправлено
+        ship.status === 'ready' &&
+        ship.hp > 0
+    );
+
+    ships.forEach(ship => {
+        const activationValue = classStats[ship.shipClass].activation;
+        if (diceValue >= activationValue) {
+            const card = document.querySelector(`.battle-ship-card[data-ship-id="${ship.id}"]`);
+            if (card) {
+                card.classList.add('can-activate');
+            }
+        }
+    });
+}
+
 /** Отрисовка списка кораблей в бою */
-function renderFleetList(container, ships) {
+function renderFleetList(container, ships, battleState, socket) {
     if (ships.length === 0) {
         const noShips = document.createElement('div');
         noShips.className = 'no-ships';
@@ -688,15 +765,8 @@ function renderFleetList(container, ships) {
 
         ships.forEach((ship, index) => {
             const shipCard = document.createElement('div');
-            shipCard.className = 'battle-ship-card clickable';
+            shipCard.className = 'battle-ship-card';
             shipCard.dataset.shipId = ship.id;
-
-            console.log(`Rendering ship card for ${ship.id}:`, {
-                currentSpeed: ship.currentSpeed,
-                maxSpeed: ship.maxSpeed,
-                currentManeuverability: ship.currentManeuverability,
-                maxManeuverability: ship.maxManeuverability
-            });
 
             // Получаем характеристики из проекта или fallback на classStats
             let displayStats = projectInfo || classStats[ship.shipClass];
@@ -718,11 +788,35 @@ function renderFleetList(container, ships) {
             const speedColor = speedPercent > 60 ? '#2196F3' : speedPercent > 30 ? '#FF9800' : '#F44336';
             const maneuverColor = maneuverPercent > 60 ? '#9C27B0' : maneuverPercent > 30 ? '#FF9800' : '#F44336';
 
+            // Определяем статус корабля
+            const shipStatus = ship.status || (ship.hp > 0 ? 'ready' : 'destroyed');
+            const statusText = {
+                'ready': 'Готов',
+                'activated': 'Активирован',
+                'spent': 'Сходил',
+                'destroyed': 'Уничтожен'
+            };
+            const statusClass = {
+                'ready': 'ready',
+                'activated': 'active',
+                'spent': 'spent',
+                'destroyed': 'destroyed'
+            };
+
+            // Определяем кликабельность карточки
+            const isClickable = ship.owner === currentPlayerId &&
+                lastBattleState && lastBattleState.currentPlayer === currentPlayerId &&
+                shipStatus === 'ready';
+
+            if (isClickable) {
+                shipCard.classList.add('clickable');
+            }
+
             shipCard.innerHTML = `
                 <div class="ship-card-header">
                     <span class="ship-name">${projectName} #${index + 1}</span>
                     <span class="ship-class-badge">${shipClass}</span>
-                    <span class="ship-status ${ship.hp > 0 ? 'active' : 'destroyed'}">${ship.hp > 0 ? 'Активен' : 'Уничтожен'}</span>
+                    <span class="ship-status ${statusClass[shipStatus]}">${statusText[shipStatus]}</span>
                 </div>
                 <div class="ship-stats">
                     <div class="hp-bar">
@@ -741,7 +835,7 @@ function renderFleetList(container, ships) {
                     </div>
                     <div class="ship-details">
                         <span>Поз: (${ship.position.q}, ${ship.position.r})</span>
-                        <span>Бр:${displayStats.armor}</span>
+                        <span>Сп:${ship.currentSpeed}/${ship.maxSpeed} Мн:${ship.currentManeuverability}/${ship.maxManeuverability} Бр:${displayStats.armor}</span>
                     </div>
                     ${projectInfo && projectInfo.modules && projectInfo.modules.length > 0 ?
                 `<div class="ship-modules">
@@ -751,21 +845,40 @@ function renderFleetList(container, ships) {
                 </div>
             `;
 
-            // Клик по карточке корабля
-            shipCard.onclick = () => {
-                // Убираем выделение с других карточек
-                document.querySelectorAll('.battle-ship-card.selected')
-                    .forEach(c => c.classList.remove('selected'));
+            // Клик по карточке корабля - только если кликабельна
+            if (isClickable) {
+                shipCard.onclick = () => {
+                    // Если выбран кубик и корабль ready - активируем
+                    if (selectedDiceValue && shipStatus === 'ready') {
+                        const activationValue = displayStats.activation;
 
-                // Выделяем эту карточку
-                shipCard.classList.add('selected');
+                        if (selectedDiceValue >= activationValue) {
+                            globalSocket.emit('activateShip', {
+                                roomId: currentBattleRoomId,
+                                shipId: ship.id,
+                                diceValue: selectedDiceValue
+                            });
 
-                // Подсвечиваем на карте
-                highlightShipOnMap(ship.id);
+                            // Сбрасываем выбор кубика
+                            selectedDiceValue = null;
+                            document.querySelectorAll('.dice-slot.selected').forEach(slot => {
+                                slot.classList.remove('selected');
+                            });
 
-                // Логируем с названием проекта
-                logBattle(`Выбран ${projectName} #${index + 1} (${shipClass}, HP: ${ship.hp}/${maxHP})`);
-            };
+                            logBattle(`Активирую ${projectName} кубиком ${selectedDiceValue}`);
+                        } else {
+                            logBattle(`Недостаточное значение кубика для активации ${shipClass}`);
+                        }
+                    } else {
+                        // Обычное выделение корабля
+                        document.querySelectorAll('.battle-ship-card.selected')
+                            .forEach(c => c.classList.remove('selected'));
+                        shipCard.classList.add('selected');
+                        highlightShipOnMap(ship.id);
+                        logBattle(`Выбран ${projectName} #${index + 1}`);
+                    }
+                };
+            }
 
             shipsContainer.appendChild(shipCard);
         });
@@ -896,6 +1009,16 @@ function addBattleStyles() {
     
     #hexmap polygon.movement-available:hover {
         fill: rgba(52,211,153,0.5) !important;
+    }
+    
+    .dice-slot.selected {
+    border-color: #FFD700 !important;
+    box-shadow: 0 0 10px #FFD700 !important;
+    }
+
+    .battle-ship-card.can-activate {
+    border: 2px solid #4CAF50;
+    box-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
     }
     
     .ship-icon {
