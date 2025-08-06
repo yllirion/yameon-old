@@ -535,3 +535,11 @@ input, select {
 .ship-icon {
     cursor: pointer;
 }
+
+.ship-status.ready {
+    background: #3B82F6;
+}
+
+.ship-status.spent {
+    background: #6B7280;
+}

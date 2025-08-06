@@ -178,7 +178,11 @@ module.exports = function(io) {
                 ship.maxSpeed = stats.speed;
                 ship.maxManeuverability = stats.maneuverability;
 
-                console.log(`Restored movement points for ship ${ship.id}: Speed ${ship.currentSpeed}/${ship.maxSpeed}, Maneuverability ${ship.currentManeuverability}/${ship.maxManeuverability}`);
+                if (ship.hp > 0) {
+                    ship.status = 'ready';
+                }
+
+                console.log(`Restored ship ${ship.id}: Status=${ship.status}, Speed ${ship.currentSpeed}/${ship.maxSpeed}, Maneuverability ${ship.currentManeuverability}/${ship.maxManeuverability}`);
             }
         });
     }
@@ -604,6 +608,7 @@ module.exports = function(io) {
                 position,
                 dir:       0,  // Направление корабля по умолчанию
                 hp:        stats.activation, // Используем activation из проекта!
+                status:    'ready',  // <-- ДОБАВИТЬ ЭТО
                 modules:   project ? project.modules || [] : [],
                 // Добавляем поля для текущих очков движения
                 currentSpeed: stats.speed,
@@ -699,6 +704,13 @@ module.exports = function(io) {
             // Проверяем, что это корабль игрока
             if (ship.owner !== socket.id) {
                 console.log('Not ship owner');
+                return;
+            }
+
+            // Проверяем статус корабля
+            if (ship.status !== 'activated') {
+                console.log('Ship not activated, status:', ship.status);
+                socket.emit('movementError', { message: 'Сначала активируйте корабль' });
                 return;
             }
 
@@ -906,6 +918,116 @@ module.exports = function(io) {
             }
 
             console.log('=== END TURN EVENT COMPLETED ===');
+        });
+
+        socket.on('activateShip', ({ roomId, shipId, diceValue }) => {
+            console.log('Activate ship request:', { roomId, shipId, diceValue });
+
+            const room = rooms[roomId];
+            if (!room || !room.battle || !room.battle.state) {
+                console.log('Room or battle not found');
+                return;
+            }
+
+            const battleState = room.battle.state;
+
+            // Проверяем, что сейчас ход игрока
+            if (battleState.currentPlayer !== socket.id) {
+                socket.emit('activationError', { message: 'Сейчас не ваш ход' });
+                return;
+            }
+
+            // Находим корабль
+            const ship = battleState.ships.find(s => s.id === shipId);
+            if (!ship) {
+                socket.emit('activationError', { message: 'Корабль не найден' });
+                return;
+            }
+
+            // Проверяем владельца
+            if (ship.owner !== socket.id) {
+                socket.emit('activationError', { message: 'Это не ваш корабль' });
+                return;
+            }
+
+            // Проверяем статус корабля
+            if (ship.status !== 'ready') {
+                socket.emit('activationError', { message: 'Корабль уже активирован или сходил' });
+                return;
+            }
+
+            // Получаем значение активации корабля
+            const project = getShipProject(ship.projectId);
+            const stats = project || classStats[ship.shipClass];
+            const activationValue = stats.activation;
+
+            // Проверяем, достаточно ли значение кубика
+            if (diceValue < activationValue) {
+                socket.emit('activationError', {
+                    message: `Для активации ${ship.shipClass} нужен кубик ${activationValue}+, а у вас ${diceValue}`
+                });
+                return;
+            }
+
+            // Проверяем наличие кубика в пуле игрока
+            const playerDice = battleState.dicePools[socket.id];
+            if (!playerDice || !playerDice.current[diceValue] || playerDice.current[diceValue] <= 0) {
+                socket.emit('activationError', { message: 'У вас нет такого кубика' });
+                return;
+            }
+
+            // Переводим все ранее активированные корабли этого игрока в статус 'spent'
+            battleState.ships.forEach(s => {
+                if (s.owner === socket.id && s.status === 'activated') {
+                    s.status = 'spent';
+                    console.log(`Ship ${s.id} automatically moved to spent status`);
+                }
+            });
+
+            // Все проверки пройдены - активируем корабль
+            ship.status = 'activated';
+
+            // Убираем использованный кубик из пула
+            playerDice.current[diceValue]--;
+
+            console.log(`Ship ${shipId} activated with dice ${diceValue}`);
+            console.log('Remaining dice pool:', playerDice.current);
+
+            // Отправляем обновленное состояние
+            io.to(`battle_${roomId}`).emit('battleState', battleState);
+
+            // Логируем событие
+            io.to(`battle_${roomId}`).emit('shipActivated', {
+                shipId: shipId,
+                shipClass: ship.shipClass,
+                playerNick: nicknames[socket.id],
+                diceValue: diceValue
+            });
+        });
+
+        socket.on('finishShipActions', ({ roomId, shipId }) => {
+            console.log('Finish ship actions:', { roomId, shipId });
+
+            const room = rooms[roomId];
+            if (!room || !room.battle || !room.battle.state) {
+                return;
+            }
+
+            const battleState = room.battle.state;
+
+            // Находим корабль
+            const ship = battleState.ships.find(s => s.id === shipId);
+            if (!ship || ship.owner !== socket.id || ship.status !== 'activated') {
+                return;
+            }
+
+            // Меняем статус на "сходил"
+            ship.status = 'spent';
+
+            console.log(`Ship ${shipId} finished actions`);
+
+            // Отправляем обновленное состояние
+            io.to(`battle_${roomId}`).emit('battleState', battleState);
         });
 
         // Сдача
