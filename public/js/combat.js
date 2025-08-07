@@ -28,17 +28,25 @@ let combatState = {
     weaponArcs: new Map() // Кеш зон стрельбы для оружия
 };
 
+let combatSocket = null;
+let combatRoomId = null;
+
 /**
  * Инициализация боевого модуля
  */
 export function initCombatSystem(socket, playerId) {
     console.log('Combat system initialized');
+    combatSocket = socket;
 
     // Подписываемся на события
     setupCombatEventHandlers(socket);
 
     // Добавляем стили для боевых оверлеев
     addCombatStyles();
+}
+
+export function setCombatRoomId(roomId) {
+    combatRoomId = roomId;
 }
 
 /**
@@ -143,9 +151,6 @@ export function calculateWeaponArc(ship, weapon) {
                 });
             }
             break;
-
-        case 'тестируем':
-            break;
     }
 
     return cells;
@@ -216,9 +221,10 @@ export function clearCombatHighlights() {
  * Создать оверлей выбора оружия для цели
  * @param {Object} target - Корабль-цель
  * @param {Array} weapons - Доступное оружие
- * @param {Object} attackerPosition - Позиция атакующего на экране
+ * @param {Object} attacker - Атакующий корабль
+ * @param {number} index - Индекс для смещения окна
  */
-export function createWeaponSelectionOverlay(target, weapons, attackerPosition) {
+export function createWeaponSelectionOverlay(target, weapons, attacker, index = 0) {
     const svg = document.getElementById('hexmap');
     const rect = svg.getBoundingClientRect();
 
@@ -231,31 +237,50 @@ export function createWeaponSelectionOverlay(target, weapons, attackerPosition) 
     // Создаем оверлей
     const overlay = document.createElement('div');
     overlay.className = 'combat-overlay weapon-selection';
-    overlay.style.left = `${targetRect.right + 10}px`;
-    overlay.style.top = `${targetRect.top}px`;
+
+    // Смещаем окна чтобы они не накладывались
+    const offsetX = 10 + (index % 2) * 250; // Чередуем слева и справа
+    const offsetY = (Math.floor(index / 2)) * 150; // Смещаем вниз для следующих пар
+
+    overlay.style.left = `${targetRect.right + offsetX}px`;
+    overlay.style.top = `${targetRect.top + offsetY}px`;
+
+    // Фильтруем только неиспользованное оружие
+    const availableWeapons = weapons.filter(w =>
+        !attacker.usedWeapons || !attacker.usedWeapons.includes(w.id)
+    );
 
     overlay.innerHTML = `
         <div class="overlay-header">
             <h4>🎯 ${target.shipClass}</h4>
+            <span class="overlay-drag-handle">⋮⋮</span>
             <span class="close-btn">&times;</span>
         </div>
         <div class="overlay-content">
             <div class="target-info">
-                <span>HP: ${target.hp}/${target.maxHP || 5}</span>
-                <span>Броня: ${target.armor || 5}</span>
+                <div class="target-stats">
+                    <span title="Очки жизни">❤️ ${target.hp}/${target.maxHP || 5}</span>
+                    <span title="Броня">🛡️ ${target.armor || 5}</span>
+                    <span title="Сложность = Скорость + Маневренность">🎯 ${(target.currentSpeed || 0) + (target.currentManeuverability || 0)}</span>
+                </div>
             </div>
             <div class="weapons-list">
-                ${weapons.map(weapon => `
-                    <label class="weapon-option">
+                ${availableWeapons.length > 0 ? availableWeapons.map(weapon => `
+                    <label class="weapon-option ${weapon.arc}">
                         <input type="checkbox" data-weapon-id="${weapon.id}" data-target-id="${target.id}">
-                        <span class="weapon-name">${weapon.name}</span>
-                        <span class="weapon-stats">Урон: ${weapon.damage}, Дальность: ${weapon.range}</span>
+                        <div class="weapon-info">
+                            <span class="weapon-name">${weapon.name}</span>
+                            <span class="weapon-arc-icon" title="${weapon.arc}">${getArcIcon(weapon.arc)}</span>
+                        </div>
+                        <span class="weapon-stats">D${weapon.damage} R${weapon.range}</span>
                     </label>
-                `).join('')}
+                `).join('') : '<div class="no-weapons">Все орудия использованы</div>'}
             </div>
-            <button class="fire-button" data-target-id="${target.id}">
-                🔥 ОТКРЫТЬ ОГОНЬ
-            </button>
+            ${availableWeapons.length > 0 ? `
+                <button class="fire-button" data-target-id="${target.id}" data-attacker-id="${attacker.id}">
+                    🔥 ОГОНЬ!
+                </button>
+            ` : ''}
         </div>
     `;
 
@@ -269,23 +294,92 @@ export function createWeaponSelectionOverlay(target, weapons, attackerPosition) 
 
     container.appendChild(overlay);
 
+    // Делаем оверлей перетаскиваемым
+    makeOverlayDraggable(overlay);
+
     // Обработчики событий
     overlay.querySelector('.close-btn').onclick = () => {
         overlay.remove();
         clearCombatHighlights();
     };
 
-    overlay.querySelector('.fire-button').onclick = () => {
-        handleFireCommand(target.id);
-        overlay.remove();
+    const fireBtn = overlay.querySelector('.fire-button');
+    if (fireBtn) {
+        fireBtn.onclick = () => {
+            handleFireCommand(target.id, attacker.id);
+            overlay.remove();
+        };
+    }
+}
+
+/**
+ * Получить иконку для типа дуги
+ */
+function getArcIcon(arc) {
+    const icons = {
+        'narrow': '▼',
+        'standard': '◆',
+        'wide': '◈',
+        'broadside': '◄►'
     };
+    return icons[arc] || '●';
+}
+
+/**
+ * Сделать оверлей перетаскиваемым
+ */
+function makeOverlayDraggable(overlay) {
+    const handle = overlay.querySelector('.overlay-drag-handle');
+    let isDragging = false;
+    let currentX;
+    let currentY;
+    let initialX;
+    let initialY;
+    let xOffset = 0;
+    let yOffset = 0;
+
+    handle.addEventListener('mousedown', dragStart);
+
+    function dragStart(e) {
+        initialX = e.clientX - xOffset;
+        initialY = e.clientY - yOffset;
+
+        if (e.target === handle) {
+            isDragging = true;
+            overlay.style.cursor = 'move';
+        }
+    }
+
+    function dragEnd(e) {
+        initialX = currentX;
+        initialY = currentY;
+        isDragging = false;
+        overlay.style.cursor = 'auto';
+    }
+
+    function drag(e) {
+        if (isDragging) {
+            e.preventDefault();
+            currentX = e.clientX - initialX;
+            currentY = e.clientY - initialY;
+
+            xOffset = currentX;
+            yOffset = currentY;
+
+            overlay.style.transform = `translate(${currentX}px, ${currentY}px)`;
+        }
+    }
+
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
 }
 
 /**
  * Обработка команды стрельбы
  * @param {string} targetId - ID цели
+ * @param {string} attackerId - ID атакующего
  */
-function handleFireCommand(targetId) {
+function handleFireCommand(targetId, attackerId) {
     const selectedWeapons = [];
 
     // Собираем выбранное оружие
@@ -298,9 +392,32 @@ function handleFireCommand(targetId) {
         return;
     }
 
-    // Отправляем команду на сервер
-    // TODO: Реализовать отправку через socket
-    console.log('Fire command:', { targetId, weapons: selectedWeapons });
+    console.log('Firing weapons:', {
+        roomId: combatRoomId,
+        attackerId,
+        targetId,
+        weaponIds: selectedWeapons,
+        socket: combatSocket ? 'exists' : 'null'
+    });
+
+    // Проверяем что socket и roomId инициализированы
+    if (!combatSocket) {
+        console.error('Combat socket not initialized!');
+        return;
+    }
+
+    if (!combatRoomId) {
+        console.error('Combat roomId not initialized!');
+        return;
+    }
+
+    // Отправляем команду
+    combatSocket.emit('fireWeapons', {
+        roomId: combatRoomId,
+        attackerId: attackerId,
+        targetId: targetId,
+        weaponIds: selectedWeapons
+    });
 
     clearCombatHighlights();
 }
@@ -341,35 +458,50 @@ function addCombatStyles() {
         
         .combat-overlay {
             position: absolute;
-            background: rgba(0, 0, 0, 0.9);
+            background: rgba(20, 20, 20, 0.95);
             border: 2px solid #ef4444;
-            border-radius: 2px;
+            border-radius: 6px;
             padding: 0;
             pointer-events: auto;
-            min-width: 140px;
+            width: 240px;
             box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
+            font-size: 13px;
         }
         
         .overlay-header {
             background: #991b1b;
-            padding: 10px 15px;
-            border-radius: 6px 6px 0 0;
+            padding: 6px 10px;
+            border-radius: 4px 4px 0 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            cursor: default;
         }
         
         .overlay-header h4 {
             margin: 0;
             color: white;
-            font-size: 10px;
+            font-size: 14px;
+        }
+        
+        .overlay-drag-handle {
+            color: rgba(255,255,255,0.6);
+            cursor: move;
+            padding: 0 8px;
+            font-size: 16px;
+            user-select: none;
+        }
+        
+        .overlay-drag-handle:hover {
+            color: white;
         }
         
         .close-btn {
             color: white;
-            font-size: 16px;
+            font-size: 20px;
             cursor: pointer;
             line-height: 1;
+            padding: 0 4px;
         }
         
         .close-btn:hover {
@@ -377,28 +509,39 @@ function addCombatStyles() {
         }
         
         .overlay-content {
-            padding: 8px;
+            padding: 10px;
         }
         
         .target-info {
+            margin-bottom: 10px;
+        }
+        
+        .target-stats {
             display: flex;
-            justify-content: space-between;
-            margin-bottom: 15px;
+            justify-content: space-around;
+            background: rgba(255,255,255,0.05);
+            padding: 6px;
+            border-radius: 4px;
+        }
+        
+        .target-stats span {
             color: #fbbf24;
-            font-size: 10px;
+            font-size: 12px;
         }
         
         .weapons-list {
             display: flex;
             flex-direction: column;
-            gap: 8px;
-            margin-bottom: 15px;
+            gap: 4px;
+            margin-bottom: 10px;
+            max-height: 200px;
+            overflow-y: auto;
         }
         
         .weapon-option {
             display: flex;
             align-items: center;
-            padding: 8px;
+            padding: 6px;
             background: rgba(255, 255, 255, 0.05);
             border-radius: 4px;
             cursor: pointer;
@@ -410,27 +553,46 @@ function addCombatStyles() {
         }
         
         .weapon-option input {
-            margin-right: 8px;
+            margin-right: 6px;
+        }
+        
+        .weapon-info {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 4px;
         }
         
         .weapon-name {
             color: white;
-            flex: 1;
+            font-size: 12px;
+        }
+        
+        .weapon-arc-icon {
+            color: #9ca3af;
+            font-size: 14px;
         }
         
         .weapon-stats {
             color: #9ca3af;
-            font-size: 12px;
+            font-size: 11px;
+        }
+        
+        .no-weapons {
+            text-align: center;
+            color: #6b7280;
+            padding: 20px;
+            font-style: italic;
         }
         
         .fire-button {
             width: 100%;
-            padding: 10px;
+            padding: 8px;
             background: #dc2626;
             color: white;
             border: none;
             border-radius: 4px;
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
             cursor: pointer;
             transition: background 0.2s;
@@ -449,6 +611,55 @@ function addCombatStyles() {
             50% { opacity: 0.6; }
             100% { opacity: 0.3; }
         }
+        
+        /* Стили для результатов боя */
+        .combat-result-overlay {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #fbbf24;
+            border-radius: 8px;
+            padding: 20px;
+            min-width: 300px;
+            max-width: 500px;
+            z-index: 1100;
+        }
+        
+        .combat-result-header {
+            font-size: 18px;
+            font-weight: bold;
+            color: #fbbf24;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .combat-step {
+            background: rgba(255,255,255,0.05);
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        
+        .combat-step.hit {
+            border-left: 3px solid #4CAF50;
+        }
+        
+        .combat-step.miss {
+            border-left: 3px solid #F44336;
+        }
+        
+        .combat-step.critical {
+            border-left: 3px solid #fbbf24;
+            animation: pulse-gold 2s infinite;
+        }
+        
+        @keyframes pulse-gold {
+            0% { box-shadow: 0 0 5px rgba(251, 191, 36, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(251, 191, 36, 0.8); }
+            100% { box-shadow: 0 0 5px rgba(251, 191, 36, 0.5); }
+        }
     `;
 
     const styleSheet = document.createElement('style');
@@ -458,28 +669,81 @@ function addCombatStyles() {
 }
 
 /**
+ * Закрыть все боевые оверлеи
+ */
+export function closeAllCombatOverlays() {
+    const overlays = document.querySelectorAll('.combat-overlay');
+    overlays.forEach(overlay => overlay.remove());
+    clearCombatHighlights();
+}
+
+/**
  * Тестовая функция для демонстрации боевой системы
  */
 export function testCombatSystem(ship, allShips) {
-    // Пример оружия
-    const testWeapon = {
-        id: 'main_guns',
-        name: 'Главные орудия',
-        damage: 2,
-        range: 3,
-        arc: 'standard'
+    // Закрываем предыдущие оверлеи
+    closeAllCombatOverlays();
+
+    // Получаем оружие корабля (временная заглушка)
+    const weapons = getShipWeapons(ship);
+
+    // Находим все цели в пределах досягаемости любого оружия
+    const potentialTargets = new Set();
+
+    weapons.forEach(weapon => {
+        // Подсветим дугу стрельбы для первого оружия
+        if (weapons[0] === weapon) {
+            highlightWeaponArc(ship, weapon);
+        }
+
+        // Найдем цели для этого оружия
+        const targets = findTargetsInArc(ship, weapon, allShips);
+        targets.forEach(t => potentialTargets.add(t));
+    });
+
+    // Конвертируем Set в массив
+    const allTargets = Array.from(potentialTargets);
+
+    // Создаем оверлей для КАЖДОЙ цели
+    allTargets.forEach((target, index) => {
+        // Задержка для распределения окон
+        setTimeout(() => {
+            createWeaponSelectionOverlay(target, weapons, ship, index);
+        }, index * 50); // Небольшая задержка чтобы окна не накладывались
+    });
+
+    console.log('Found targets:', allTargets);
+}
+
+/**
+ * Получить оружие корабля (временная реализация)
+ */
+function getShipWeapons(ship) {
+    const weaponsByClass = {
+        'Фрегат': [
+            { id: 'frigate_gun_1', name: 'Легкое орудие', damage: 1, range: 3, arc: 'standard' }
+        ],
+        'Эсминец': [
+            { id: 'destroyer_gun_1', name: 'Орудие ГК', damage: 2, range: 4, arc: 'standard' },
+            { id: 'destroyer_gun_2', name: 'Зенитка', damage: 1, range: 2, arc: 'wide' }
+        ],
+        'Крейсер': [
+            { id: 'cruiser_gun_1', name: 'Тяжелое орудие #1', damage: 2, range: 4, arc: 'narrow' },
+            { id: 'cruiser_gun_2', name: 'Тяжелое орудие #2', damage: 2, range: 4, arc: 'narrow' },
+            { id: 'cruiser_sec_1', name: 'Вспомогательное #1', damage: 1, range: 3, arc: 'wide' }
+        ],
+        'Линкор': [
+            { id: 'battleship_main_1', name: 'Главный калибр #1', damage: 3, range: 5, arc: 'narrow' },
+            { id: 'battleship_main_2', name: 'Главный калибр #2', damage: 3, range: 5, arc: 'narrow' },
+            { id: 'battleship_sec_1', name: 'Средний калибр #1', damage: 2, range: 4, arc: 'wide' },
+            { id: 'battleship_sec_2', name: 'Средний калибр #2', damage: 2, range: 4, arc: 'wide' }
+        ],
+        'Дредноут': [
+            { id: 'dread_main_1', name: 'Сверхтяжелое орудие #1', damage: 4, range: 6, arc: 'narrow' },
+            { id: 'dread_main_2', name: 'Сверхтяжелое орудие #2', damage: 4, range: 6, arc: 'narrow' },
+            { id: 'dread_main_3', name: 'Сверхтяжелое орудие #3', damage: 4, range: 6, arc: 'narrow' }
+        ]
     };
 
-    // Подсветим дугу стрельбы
-    highlightWeaponArc(ship, testWeapon);
-
-    // Найдем цели
-    const targets = findTargetsInArc(ship, testWeapon, allShips);
-
-    if (targets.length > 0) {
-        // Покажем оверлей для первой цели
-        createWeaponSelectionOverlay(targets[0], [testWeapon], null);
-    }
-
-    console.log('Found targets:', targets);
+    return weaponsByClass[ship.shipClass] || [];
 }

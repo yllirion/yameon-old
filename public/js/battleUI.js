@@ -11,7 +11,7 @@ import {
     getSelectedShipForMovement
 } from './hexmap.js';
 
-import { initCombatSystem, testCombatSystem } from './combat.js';
+import { initCombatSystem, testCombatSystem, setCombatRoomId } from './combat.js';
 
 /** Базовые характеристики по классу – используется для карточек и логов */
 const classStats = {
@@ -28,6 +28,7 @@ let lastShips           = [];
 let currentBattleRoomId = null;
 let lastBattleState = null;
 let currentPlayerId = null;
+let globalSocket = null;
 
 // Кэш для проектов кораблей
 let shipProjectsCache = {};
@@ -236,7 +237,7 @@ function setupBattleClickHandlers(state, socket, playerId) {
 }
 
 /** Инициализация боевого UI */
-let globalSocket = null;
+
 
 export function initBattleUI(showView, socket, playerId) {
     globalSocket = socket; // Сохраняем socket глобально
@@ -283,9 +284,9 @@ export function initBattleUI(showView, socket, playerId) {
         console.log('[battleState received]', state);
 
         lastBattleState = state;
-
-        // Сохраняем roomId локально
         currentBattleRoomId = state.id;
+
+        setCombatRoomId(state.id)
 
         if (state.ships) {
             console.log('=== SHIPS MOVEMENT POINTS UPDATE ===');
@@ -332,6 +333,15 @@ export function initBattleUI(showView, socket, playerId) {
 
     socket.on('shipActivated', ({ shipId, shipClass, playerNick, diceValue }) => {
         logBattle(`${playerNick} активировал ${shipClass} кубиком ${diceValue}`);
+    });
+
+    socket.on('combatResults', (data) => {
+        console.log('Combat results:', data);
+        displayCombatResults(data);
+    });
+
+    socket.on('combatError', ({ message }) => {
+        logBattle(`Ошибка боя: ${message}`);
     });
 
     socket.on('activationError', ({ message }) => {
@@ -1037,4 +1047,25 @@ function addBattleStyles() {
     document.head.appendChild(styleSheet);
 
     console.log('Battle styles added');
+}
+
+function displayCombatResults(data) {
+    const { results } = data;
+
+    results.forEach(result => {
+        if (result.error) {
+            logBattle(`${result.weaponId}: ${result.error}`);
+            return;
+        }
+
+        result.steps.forEach(step => {
+            logBattle(step.message);
+        });
+
+        if (result.additionalEffects) {
+            result.additionalEffects.forEach(effect => {
+                logBattle(`⚡ ${effect}`);
+            });
+        }
+    });
 }

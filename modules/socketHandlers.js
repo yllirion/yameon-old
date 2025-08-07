@@ -1,4 +1,5 @@
 // modules/socketHandlers.js
+const { handleFireCommand } = require('./combatHandler')
 
 module.exports = function(io) {
     // Хранилища комнат и ников
@@ -181,6 +182,8 @@ module.exports = function(io) {
                 if (ship.hp > 0) {
                     ship.status = 'ready';
                 }
+
+                ship.usedWeapons = [];
 
                 console.log(`Restored ship ${ship.id}: Status=${ship.status}, Speed ${ship.currentSpeed}/${ship.maxSpeed}, Maneuverability ${ship.currentManeuverability}/${ship.maxManeuverability}`);
             }
@@ -788,6 +791,11 @@ module.exports = function(io) {
 
             // Отправляем обновленное состояние
             io.to(`battle_${roomId}`).emit('battleState', b.state);
+        });
+
+        socket.on('fireWeapons', (data) => {
+            console.log('Fire weapons request:', data);
+            handleFireCommand(socket, data.roomId, data, rooms, nicknames, io);
         });
 
         /**
