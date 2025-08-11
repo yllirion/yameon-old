@@ -112,6 +112,7 @@ function processCriticalHit(target, battleState, io, roomId) {
             break;
 
         case 'chain_reaction':
+
             result.additionalEffects.push('Цепная реакция!');
             // Рекурсивно вызываем еще один крит
             setTimeout(() => {
@@ -121,6 +122,7 @@ function processCriticalHit(target, battleState, io, roomId) {
                     result: chainResult
                 });
             }, 1000);
+
             break;
 
         case 'armor_damage':
@@ -183,6 +185,11 @@ function processWeaponFire(attacker, target, weapon, battleState, io, roomId) {
         steps: []
     };
 
+    if (!attacker.usedWeapons) {
+        attacker.usedWeapons = [];
+    }
+    attacker.usedWeapons.push(weapon.id);
+
     // 1. Проверка попадания
     const difficulty = calculateTargetDifficulty(target);
     const hitCheck = checkHit(difficulty);
@@ -237,10 +244,6 @@ function processWeaponFire(attacker, target, weapon, battleState, io, roomId) {
     results.targetDestroyed = target.hp <= 0;
 
     // Отмечаем что оружие использовано
-    if (!attacker.usedWeapons) {
-        attacker.usedWeapons = [];
-    }
-    attacker.usedWeapons.push(weapon.id);
 
     return results;
 }

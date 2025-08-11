@@ -191,6 +191,18 @@ function setupBattleClickHandlers(state, socket, playerId) {
                 });
                 shipIcon.classList.add('selected-for-movement');
 
+                if (ship.status === 'activated' && ship.currentManeuverability > 0) {
+                    addRotationControls(
+                        ship,
+                        true,  // isCurrentPlayer
+                        false, // isPlacementPhase (false = боевая фаза)
+                        (shipId, direction) => handleCombatRotation(socket, state.id, shipId, direction, ship)
+                    );
+
+                    // Показываем кнопки только для этого корабля
+                    showRotationControlsForShip(shipId);
+                }
+
                 logBattle(`Выбран корабль для движения: ${ship.shipClass} в (${ship.position.q},${ship.position.r})`);
             };
 
@@ -724,6 +736,29 @@ function highlightActivatableShips(diceValue) {
     });
 }
 
+function handleCombatRotation(socket, roomId, shipId, direction, ship) {
+    // Проверяем достаточно ли очков маневренности
+    if (ship.currentManeuverability <= 0) {
+        logBattle('Недостаточно очков маневренности для поворота');
+        return;
+    }
+
+    // Определяем стоимость поворота (пока всегда 1)
+    const maneuverCost = 1;
+
+    console.log('Combat rotation:', { shipId, direction, maneuverCost });
+
+    // Отправляем команду поворота на сервер
+    socket.emit('combatRotateShip', {
+        roomId: roomId,
+        shipId: shipId,
+        direction: direction,
+        maneuverCost: maneuverCost
+    });
+
+    logBattle(`Поворот ${direction === 'left' ? 'налево' : 'направо'} (−1 манёвренность)`);
+}
+
 /** Отрисовка списка кораблей в бою */
 function renderFleetList(container, ships, battleState, socket) {
     if (ships.length === 0) {
@@ -797,6 +832,7 @@ function renderFleetList(container, ships, battleState, socket) {
 
             const speedColor = speedPercent > 60 ? '#2196F3' : speedPercent > 30 ? '#FF9800' : '#F44336';
             const maneuverColor = maneuverPercent > 60 ? '#9C27B0' : maneuverPercent > 30 ? '#FF9800' : '#F44336';
+            const currentArmor = displayStats.armor - (ship.armorPenalty || 0);
 
             // Определяем статус корабля
             const shipStatus = ship.status || (ship.hp > 0 ? 'ready' : 'destroyed');
@@ -845,7 +881,7 @@ function renderFleetList(container, ships, battleState, socket) {
                     </div>
                     <div class="ship-details">
                         <span>Поз: (${ship.position.q}, ${ship.position.r})</span>
-                        <span>Сп:${ship.currentSpeed}/${ship.maxSpeed} Мн:${ship.currentManeuverability}/${ship.maxManeuverability} Бр:${displayStats.armor}</span>
+                        <span>Бр:${displayStats.armor}${ship.armorPenalty ? ` (-${ship.armorPenalty})` : ''}</span>
                     </div>
                     ${projectInfo && projectInfo.modules && projectInfo.modules.length > 0 ?
                 `<div class="ship-modules">
