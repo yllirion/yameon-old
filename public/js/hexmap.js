@@ -240,8 +240,23 @@ export function renderPlacedShips(ships) {
 
 /** Добавляет кнопки поворота под кораблем используя кубические координаты */
 export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onRotate) {
-    // В фазе расстановки показываем кнопки для всех своих кораблей
-    if (!isCurrentPlayer || !isPlacementPhase) return;
+    console.log('addRotationControls called:', {
+        shipId: ship.id,
+        isCurrentPlayer,
+        isPlacementPhase,
+        shipStatus: ship.status
+    });
+
+    // В боевой фазе показываем кнопки только для активированных кораблей
+    if (!isCurrentPlayer) {
+        console.log('Not current player, skipping rotation controls');
+        return;
+    }
+
+    if (!isPlacementPhase && ship.status !== 'activated') {
+        console.log('Battle phase but ship not activated, skipping rotation controls');
+        return;
+    }
 
     const svg = document.getElementById('hexmap');
     if (!svg) return;
@@ -489,6 +504,11 @@ export function showMovementCells(ship, allShips) {
 
 /** Очищает подсветку движения */
 export function clearMovementHighlight() {
+    // Скрываем все кнопки поворота
+    document.querySelectorAll('.ship-rotation-controls').forEach(el => {
+        el.style.display = 'none';
+    });
+
     // Убираем CSS классы с гексов
     document.querySelectorAll('#hexmap polygon.movement-available').forEach(poly => {
         poly.classList.remove('movement-available');

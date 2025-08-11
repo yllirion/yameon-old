@@ -799,6 +799,43 @@ module.exports = function(io) {
         });
 
         /**
+         * Поворот корабля в боевой фазе
+         */
+        socket.on('combatRotateShip', ({ roomId, shipId, direction, maneuverCost }) => {
+            console.log('Combat rotate ship:', { roomId, shipId, direction });
+
+            const room = rooms[roomId];
+            if (!room || !room.battle) return;
+
+            const b = room.battle;
+            if (b.state.phase !== 'battle') return;
+
+            const ship = b.state.ships.find(s => s.id === shipId);
+            if (!ship || ship.owner !== socket.id || ship.status !== 'activated') return;
+
+            // Проверяем очки маневренности
+            if (ship.currentManeuverability < maneuverCost) {
+                socket.emit('movementError', { message: 'Недостаточно очков маневренности' });
+                return;
+            }
+
+            // Поворачиваем корабль
+            if (direction === 'left') {
+                ship.dir = (ship.dir + 1) % 6;
+            } else if (direction === 'right') {
+                ship.dir = (ship.dir + 5) % 6;
+            }
+
+            // Тратим очки маневренности
+            ship.currentManeuverability -= maneuverCost;
+
+            console.log(`Ship ${shipId} rotated in combat, remaining MP: ${ship.currentManeuverability}`);
+
+            // Обновляем состояние
+            io.to(`battle_${roomId}`).emit('battleState', b.state);
+        });
+
+        /**
          * Завершение хода в боевой фазе ИЛИ в фазе расстановки
          */
         socket.on('endTurn', ({ roomId }) => {
