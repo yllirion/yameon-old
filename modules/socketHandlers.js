@@ -1077,9 +1077,18 @@ module.exports = function(io) {
 
         // Сдача
         socket.on('surrender', () => {
+            console.log('Surrender received from:', socket.id);
+
             const roomId = Object.keys(rooms).find(r => rooms[r].players.includes(socket.id));
+            console.log('Found roomId:', roomId);
+
             if (!roomId) return;
-            io.to(roomId).emit('gameOver', { loser: nicknames[socket.id] });
+
+            const battleRoom = `battle_${roomId}`;
+            console.log('Emitting gameOver to:', battleRoom);
+
+            io.to(battleRoom).emit('gameOver', { loser: nicknames[socket.id] });
+
             delete rooms[roomId];
             broadcastRoomsData();
         });

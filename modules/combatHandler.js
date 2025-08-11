@@ -112,7 +112,17 @@ function processCriticalHit(target, battleState, io, roomId) {
             break;
 
         case 'chain_reaction':
-
+            result.additionalEffects.push('Цепная реакция!');
+            const chainResult = processCriticalHit(target, battleState, io, roomId);
+            // Более наглядное форматирование
+            result.additionalEffects.push(`→ ${chainResult.effect} (бросок: ${chainResult.roll})`);
+            // Добавляем вложенные эффекты с отступом
+            if (chainResult.additionalEffects) {
+                chainResult.additionalEffects.forEach(eff => {
+                    result.additionalEffects.push(`  ${eff}`);
+                });
+            }
+/*
             result.additionalEffects.push('Цепная реакция!');
             // Рекурсивно вызываем еще один крит
             setTimeout(() => {
@@ -122,7 +132,7 @@ function processCriticalHit(target, battleState, io, roomId) {
                     result: chainResult
                 });
             }, 1000);
-
+*/
             break;
 
         case 'armor_damage':
@@ -314,6 +324,8 @@ function handleFireCommand(socket, roomId, data, rooms, nicknames, io) {
 
     // Обновляем состояние битвы
     io.to(`battle_${roomId}`).emit('battleState', battleState);
+
+    checkVictoryConditions(battleState, rooms[roomId], io, roomId, nicknames);
 }
 
 /**
@@ -348,6 +360,35 @@ function getShipWeapons(ship) {
     };
 
     return weaponsByClass[ship.shipClass] || [];
+}
+
+function checkVictoryConditions(battleState, room, io, roomId, nicknames) {
+    // Подсчитываем живые корабли каждого игрока
+    const aliveShipsByPlayer = {};
+
+    battleState.ships.forEach(ship => {
+        if (ship.hp > 0 && ship.status !== 'destroyed') {
+            aliveShipsByPlayer[ship.owner] = (aliveShipsByPlayer[ship.owner] || 0) + 1;
+        }
+    });
+
+    // Проверяем, остался ли кто-то без кораблей
+    const players = room.players;
+    const losers = players.filter(playerId => !aliveShipsByPlayer[playerId]);
+
+    if (losers.length > 0) {
+        // Кто-то проиграл
+        const winners = players.filter(playerId => aliveShipsByPlayer[playerId] > 0);
+
+        io.to(`battle_${roomId}`).emit('gameOver', {
+            winners: winners.map(id => nicknames[id]),
+            losers: losers.map(id => nicknames[id]),
+            reason: 'Все корабли уничтожены'
+        });
+
+        // Можно удалить комнату или пометить как завершенную
+        room.battle.ended = true;
+    }
 }
 
 module.exports = {
