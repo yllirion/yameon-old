@@ -338,9 +338,26 @@ export function initBattleUI(showView, socket, playerId) {
         }
     });
 
-    socket.on('gameOver', ({ loser }) => {
-        logBattle(`Игрок ${loser} сдался — игра окончена`);
-        showView('lobby');
+    socket.on('gameOver', (data) => {
+        console.log('gameOver received:', data); // ДОБАВИТЬ ЭТО
+
+        // Новый формат - победа по уничтожению всех кораблей
+        if (data.winners && data.losers) {
+            logBattle(`🏆 Победа ${data.winners.join(', ')}!`);
+            logBattle(`💀 ${data.losers.join(', ')} - все корабли уничтожены`);
+        }
+        // Старый формат - сдача
+        else if (data.loser) {
+            logBattle(`Игрок ${data.loser} сдался — игра окончена`);
+        }
+
+        console.log('Returning to lobby...'); // И ЭТО
+
+        // В любом случае возвращаемся в лобби
+        setTimeout(() => {
+            alert('Игра окончена!');
+            showView('lobby');
+        }, 2000);
     });
 
     socket.on('shipActivated', ({ shipId, shipClass, playerNick, diceValue }) => {
