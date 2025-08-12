@@ -13,6 +13,16 @@
       "shipClass": "Крейсер",
       "projectId": "ship003",
       "count": 1
+    },
+    {
+      "shipClass": "Фрегат",
+      "projectId": "ship007",
+      "count": 1
+    },
+    {
+      "shipClass": "Эсминец",
+      "projectId": "ship002",
+      "count": 2
     }
   ]
 }

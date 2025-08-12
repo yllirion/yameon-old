@@ -617,6 +617,17 @@ function renderBattlePanel(containerId, ships, dicePool, playerName) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
+    console.log(`Rendering battle panel for ${playerName}:`, {
+        shipsCount: ships.length,
+        ships: ships.map(s => ({
+            id: s.id,
+            class: s.shipClass,
+            currentSpeed: s.currentSpeed,
+            currentManeuverability: s.currentManeuverability,
+            hp: s.hp
+        }))
+    });
+
     container.innerHTML = '';
     //container.offsetHeight; //Тест: попытка явно перерисовать игровое поле
 

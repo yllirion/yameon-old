@@ -170,14 +170,10 @@ module.exports = function(io) {
     function restoreMovementPoints(ships, playerId) {
         ships.forEach(ship => {
             if (ship.owner === playerId) {
-                // Получаем актуальные характеристики с учетом проекта и модулей
-                const project = getShipProject(ship.projectId);
-                const stats = project ? calculateShipStats(ship.shipClass, project.modules || []) : classStats[ship.shipClass];
-
-                ship.currentSpeed = stats.speed;
-                ship.currentManeuverability = stats.maneuverability;
-                ship.maxSpeed = stats.speed;
-                ship.maxManeuverability = stats.maneuverability;
+                // Восстанавливаем текущие очки до максимальных значений
+                // которые уже учитывают повреждения
+                ship.currentSpeed = ship.maxSpeed;
+                ship.currentManeuverability = ship.maxManeuverability;
 
                 if (ship.hp > 0) {
                     ship.status = 'ready';
@@ -795,7 +791,7 @@ module.exports = function(io) {
 
         socket.on('fireWeapons', (data) => {
             console.log('Fire weapons request:', data);
-            handleFireCommand(socket, data.roomId, data, rooms, nicknames, io);
+            handleFireCommand(socket, data.roomId, data, rooms, nicknames, io, broadcastRoomsData);
         });
 
         /**
@@ -821,9 +817,9 @@ module.exports = function(io) {
 
             // Поворачиваем корабль
             if (direction === 'left') {
-                ship.dir = (ship.dir + 1) % 6;
-            } else if (direction === 'right') {
                 ship.dir = (ship.dir + 5) % 6;
+            } else if (direction === 'right') {
+                ship.dir = (ship.dir + 1) % 6;
             }
 
             // Тратим очки маневренности
