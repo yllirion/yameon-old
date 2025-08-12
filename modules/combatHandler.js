@@ -261,7 +261,7 @@ function processWeaponFire(attacker, target, weapon, battleState, io, roomId) {
 /**
  * Обработчик команды стрельбы
  */
-function handleFireCommand(socket, roomId, data, rooms, nicknames, io) {
+function handleFireCommand(socket, roomId, data, rooms, nicknames, io, broadcastRoomsData) {
     const { attackerId, targetId, weaponIds } = data;
 
     const room = rooms[roomId];
@@ -325,7 +325,7 @@ function handleFireCommand(socket, roomId, data, rooms, nicknames, io) {
     // Обновляем состояние битвы
     io.to(`battle_${roomId}`).emit('battleState', battleState);
 
-    checkVictoryConditions(battleState, rooms[roomId], io, roomId, nicknames);
+    checkVictoryConditions(battleState, rooms[roomId], io, roomId, nicknames, rooms, broadcastRoomsData);
 }
 
 /**
@@ -362,7 +362,7 @@ function getShipWeapons(ship) {
     return weaponsByClass[ship.shipClass] || [];
 }
 
-function checkVictoryConditions(battleState, room, io, roomId, nicknames) {
+function checkVictoryConditions(battleState, room, io, roomId, nicknames, rooms, broadcastRoomsData) {
     // Подсчитываем живые корабли каждого игрока
     const aliveShipsByPlayer = {};
 
@@ -386,8 +386,9 @@ function checkVictoryConditions(battleState, room, io, roomId, nicknames) {
             reason: 'Все корабли уничтожены'
         });
 
-        // Можно удалить комнату или пометить как завершенную
-        room.battle.ended = true;
+        // Удаляем комнату как при сдаче
+        delete rooms[roomId];
+        broadcastRoomsData();
     }
 }
 
