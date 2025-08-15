@@ -288,8 +288,13 @@ export function initBattleUI(showView, socket, playerId) {
     });
 
     // Обработчик смены хода
-    socket.on('turnChanged', ({ currentPlayerNick, round }) => {
+    socket.on('turnChanged', ({ currentPlayer, currentPlayerNick, round }) => {
         logBattle(`Ход переходит к ${currentPlayerNick}. Раунд ${round}`);
+
+        // Показываем уведомление если это наш ход
+        if (currentPlayer === currentPlayerId) {
+            showTurnNotification('Ваш ход!');
+        }
     });
 
     socket.on('battleState', async state => {
@@ -393,7 +398,7 @@ async function renderPlacement(state, showView, socket, playerId) {
     // Рисуем сетку и иконки уже выставленных кораблей
     requestAnimationFrame(() => {
         drawHexGrid();
-        renderPlacedShips(state.ships);
+        renderPlacedShips(state.ships, playerId);
 
         // Добавляем кнопки поворота для кораблей текущего игрока
         state.ships.forEach(ship => {
@@ -563,7 +568,7 @@ async function renderBattle(state, showView, socket, playerId) {
     // Сетка и иконки
     requestAnimationFrame(() => {
         drawHexGrid();
-        renderPlacedShips(state.ships);
+        renderPlacedShips(state.ships, playerId);
 
         // Добавляем обработчики для боевой фазы
         setTimeout(() => {
@@ -1017,6 +1022,18 @@ function setupBattleButtons(socket, playerId) {
         };
         console.log('Surrender button handler attached');
     }
+}
+
+function showTurnNotification(message) {
+    const notification = document.createElement('div');
+    notification.className = 'turn-notification';
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    // Удаляем через 3 секунды
+    setTimeout(() => {
+        notification.remove();
+    }, 3000);
 }
 
 function generateDicePool(round, previousOnes = 0) {

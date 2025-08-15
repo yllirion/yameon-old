@@ -139,7 +139,7 @@ function onHexClick(evt) {
 }
 
 /** Рисует все выставленные корабли как SVG элементы используя кубические координаты */
-export function renderPlacedShips(ships) {
+export function renderPlacedShips(ships, currentPlayerId = null) {
     console.log('Rendering ships with cubic coordinates:', ships);
 
     // Удаляем предыдущие иконки и кнопки
@@ -173,6 +173,18 @@ export function renderPlacedShips(ships) {
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('ship-icon');
         group.setAttribute('data-ship-id', ship.id);
+
+        if (currentPlayerId) {
+            if (ship.owner === currentPlayerId) {
+                group.classList.add('player-ship');
+            } else {
+                group.classList.add('enemy-ship');
+            }
+        }
+
+        if (ship.status === 'activated') {
+            group.classList.add('activated');
+        }
 
         // Создаем элемент изображения
         const img = document.createElementNS('http://www.w3.org/2000/svg','image');
