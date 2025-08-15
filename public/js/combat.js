@@ -171,6 +171,9 @@ export function findTargetsInArc(ship, weapon, allShips) {
         // Пропускаем свой корабль и союзников
         if (target.id === ship.id || target.owner === ship.owner) return;
 
+        // Пропускаем уничтоженные корабли
+        if (target.status === 'destroyed' || target.hp <= 0) return;
+
         // Проверяем, находится ли цель в зоне поражения
         const isInArc = weaponCells.some(cell =>
             cell.q === target.position.q &&
@@ -684,18 +687,36 @@ export function testCombatSystem(ship, allShips) {
     // Закрываем предыдущие оверлеи
     closeAllCombatOverlays();
 
-    // Получаем оружие корабля (временная заглушка)
+    // Получаем оружие корабля
     const weapons = getShipWeapons(ship);
+
+    // Собираем все ячейки из всех дуг
+    const allWeaponCells = new Set();
+
+    weapons.forEach(weapon => {
+        const cells = calculateWeaponArc(ship, weapon);
+        cells.forEach(cell => {
+            allWeaponCells.add(`${cell.q},${cell.r},${cell.s}`);
+        });
+    });
+
+    // Подсвечиваем объединенную зону
+    clearCombatHighlights();
+    allWeaponCells.forEach(cellKey => {
+        const [q, r, s] = cellKey.split(',').map(Number);
+        const poly = document.querySelector(
+            `#hexmap polygon[data-q="${q}"][data-r="${r}"][data-s="${s}"]`
+        );
+        if (poly) {
+            poly.classList.add('weapon-arc-highlight');
+            poly.setAttribute('fill', 'rgba(239, 68, 68, 0.3)');
+        }
+    });
 
     // Находим все цели в пределах досягаемости любого оружия
     const potentialTargets = new Set();
 
     weapons.forEach(weapon => {
-        // Подсветим дугу стрельбы для первого оружия
-        if (weapons[0] === weapon) {
-            highlightWeaponArc(ship, weapon);
-        }
-
         // Найдем цели для этого оружия
         const targets = findTargetsInArc(ship, weapon, allShips);
         targets.forEach(t => potentialTargets.add(t));

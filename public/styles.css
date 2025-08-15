@@ -137,13 +137,15 @@ input, select {
     flex: 1;
 }
 .side-panel {
-    width: 200px;
+    width: 220px;
     border: 1px solid #999;
     padding: 8px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow-y: auto;  /* Добавляем прокрутку */
+    max-height: calc(75vh - 50px);  /* Ограничиваем высоту */
 }
 .center-field {
     flex: 1;
@@ -156,9 +158,12 @@ input, select {
 .battle-footer {
     border-top: 1px solid #aaa;
     padding: 8px;
-    height: 120px;
+    height: 25vh;  /* 25% от высоты экрана */
+    min-height: 120px;  /* Минимальная высота */
+    max-height: 300px;  /* Максимальная высота */
     overflow-y: auto;
     background: #fafafa;
+    flex-shrink: 0;  /* Не позволяет сжиматься */
 }
 
 /* === Кубы D6 === */
@@ -469,8 +474,8 @@ input, select {
 
 .dice-count {
     position: absolute;
-    top: -8px;
-    right: -8px;
+    bottom: 16px;
+    left: 16px;
     background: #F44336;
     color: white;
     border-radius: 50%;
@@ -542,4 +547,58 @@ input, select {
 
 .ship-status.spent {
     background: #6B7280;
+}
+
+/* Всплывающее уведомление о ходе */
+.turn-notification {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(33, 150, 243, 0.95);
+    color: white;
+    padding: 20px 40px;
+    border-radius: 10px;
+    font-size: 24px;
+    font-weight: bold;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    z-index: 2000;
+    animation: fadeInOut 3s ease-in-out;
+    pointer-events: none;
+}
+
+@keyframes fadeInOut {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+    20% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+}
+/* === Подсветка корабликов === */
+.ship-icon image {
+    transition: filter 0.3s;
+}
+
+/* Зеленая обводка для своих кораблей */
+.ship-icon.player-ship image {
+    filter: drop-shadow(0 0 3px #4CAF50);
+}
+
+/* Красная обводка для вражеских кораблей */
+.ship-icon.enemy-ship image {
+    filter: drop-shadow(0 0 3px #F44336);
+}
+
+/* Желтая обводка при наведении */
+.ship-icon:hover image {
+    filter: drop-shadow(0 0 5px #FFD700);
+}
+
+/* Белая обводка для выбранного корабля */
+.ship-icon.selected-for-movement image {
+    filter: drop-shadow(0 0 8px #FFFFFF) drop-shadow(0 0 4px #FFFFFF);
+}
+
+/* Оранжевая обводка для активированного корабля */
+.ship-icon.activated image {
+    filter: drop-shadow(0 0 5px #FF9800);
 }
