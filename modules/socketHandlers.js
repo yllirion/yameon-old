@@ -394,6 +394,15 @@ module.exports = function(io) {
 
         console.log('Battle phase started, round 1, dice pools:', battleState.dicePools);
 
+        if (!checkIfPlayerCanActivate(battleState, battleState.currentPlayer)) {
+            // Первый игрок не может ходить, проверяем второго
+            const otherPlayer = room.players.find(id => id !== battleState.currentPlayer);
+            if (checkIfPlayerCanActivate(battleState, otherPlayer)) {
+                battleState.currentPlayer = otherPlayer;
+                console.log(`First player can't activate, switching to ${nicknames[otherPlayer]}`);
+            }
+        }
+
         // Отправляем обновленное состояние с кубиками
         io.to(`battle_${roomId}`).emit('battleState', battleState);
     }
@@ -408,6 +417,86 @@ module.exports = function(io) {
             ship.position.r === position.r &&
             ship.position.s === position.s
         );
+    }
+
+    function checkIfPlayerCanActivate(battleState, playerId) {
+        const playerShips = battleState.ships.filter(s =>
+            s.owner === playerId &&
+            s.status === 'ready' &&
+            s.hp > 0
+        );
+
+        if (playerShips.length === 0) return false;
+
+        const playerDice = battleState.dicePools[playerId];
+        if (!playerDice) return false;
+
+        // Проверяем каждый корабль
+        for (const ship of playerShips) {
+            const activationValue = classStats[ship.shipClass].activation;
+            // Проверяем есть ли подходящие кубы
+            for (let value = activationValue; value <= 6; value++) {
+                if (playerDice.current[value] > 0) {
+                    return true; // Есть хотя бы один корабль который можно активировать
+                }
+            }
+        }
+
+        return false;
+    }
+
+    function startNewRound(battleState, room, roomId) {
+        battleState.round++;
+        console.log(`Starting round ${battleState.round}`);
+
+        // Генерируем новые пулы кубиков
+        room.players.forEach(pid => {
+            const playerDice = battleState.dicePools[pid];
+            const savedOnes = playerDice.current[1] + playerDice.savedOnes;
+            const newPool = rollDicePool(battleState.round, savedOnes);
+            playerDice.current = newPool;
+            playerDice.savedOnes = newPool[1];
+        });
+
+        // Определяем кто ходит первым - у кого больше кораблей
+        const shipCounts = {};
+        room.players.forEach(pid => {
+            shipCounts[pid] = battleState.ships.filter(s =>
+                s.owner === pid && s.hp > 0
+            ).length;
+        });
+
+        const firstPlayer = room.players.reduce((a, b) =>
+            shipCounts[a] >= shipCounts[b] ? a : b
+        );
+
+        battleState.currentPlayer = firstPlayer;
+
+        if (!checkIfPlayerCanActivate(battleState, firstPlayer)) {
+            const otherPlayer = room.players.find(id => id !== firstPlayer);
+            if (checkIfPlayerCanActivate(battleState, otherPlayer)) {
+                battleState.currentPlayer = otherPlayer;
+                console.log(`First player can't activate, switching to ${nicknames[otherPlayer]}`);
+            }
+        }
+
+        // Восстанавливаем очки движения для первого игрока
+        restoreMovementPoints(battleState.ships, firstPlayer);
+
+        // Сбрасываем статусы кораблей
+        battleState.ships.forEach(ship => {
+            if (ship.hp > 0) {
+                ship.status = 'ready';
+            }
+        });
+
+        io.to(`battle_${roomId}`).emit('battleState', battleState);
+        io.to(`battle_${roomId}`).emit('turnChanged', {
+            currentPlayer: battleState.currentPlayer,
+            currentPlayerNick: nicknames[battleState.currentPlayer],
+            round: battleState.round,
+            isNewRound: true
+        });
     }
 
     /**
@@ -836,28 +925,12 @@ module.exports = function(io) {
          */
         socket.on('endTurn', ({ roomId }) => {
             console.log('=== END TURN EVENT RECEIVED ===');
-            console.log('From player:', socket.id);
-            console.log('For room:', roomId);
-            console.log('Player nickname:', nicknames[socket.id]);
-
             const room = rooms[roomId];
-            if (!room || !room.battle || !room.battle.state) {
-                console.log('ERROR: Room or battle not found');
-                return;
-            }
+            if (!room || !room.battle || !room.battle.state) return;
 
             const battleState = room.battle.state;
-            console.log('Current battle state:', {
-                phase: battleState.phase,
-                currentPlayer: battleState.currentPlayer,
-                round: battleState.round
-            });
 
-            // Проверяем, что сейчас ход этого игрока
             if (battleState.currentPlayer !== socket.id) {
-                console.log('ERROR: Not current player turn');
-                console.log('Expected:', battleState.currentPlayer);
-                console.log('Actual:', socket.id);
                 socket.emit('turnError', { message: 'Сейчас не ваш ход' });
                 return;
             }
@@ -897,68 +970,40 @@ module.exports = function(io) {
                 });
 
             } else if (battleState.phase === 'battle') {
-                // === ЛОГИКА ДЛЯ БОЕВОЙ ФАЗЫ ===
-                console.log('Processing battle phase end turn');
-
-                // Переключаем игрока
-                const otherPlayer = room.players.find(id => id !== socket.id);
-                console.log('Switching turn from', nicknames[socket.id], 'to', nicknames[otherPlayer]);
-
-                battleState.currentPlayer = otherPlayer;
-
-                // Восстанавливаем очки движения для нового активного игрока
-                console.log('Restoring movement points for player:', nicknames[otherPlayer]);
-                restoreMovementPoints(battleState.ships, otherPlayer);
-
-                // Проверяем, нужно ли начать новый раунд
-                const isNewRound = battleState.currentPlayer === room.players[0];
-
-                if (isNewRound) {
-                    battleState.round++;
-                    console.log(`Starting round ${battleState.round}`);
-
-                    // Генерируем новые пулы кубиков для нового раунда
-                    room.players.forEach(pid => {
-                        const playerDice = battleState.dicePools[pid];
-
-                        // Сохраняем единицы из текущего пула
-                        const savedOnes = playerDice.current[1] + playerDice.savedOnes;
-
-                        // Генерируем новый пул кубиков
-                        const newPool = rollDicePool(battleState.round, savedOnes);
-
-                        playerDice.current = newPool;
-                        playerDice.savedOnes = newPool[1]; // Обновляем счетчик сохраненных единиц
-
-                        console.log(`Player ${nicknames[pid]} dice pool:`, newPool);
-                    });
-                }
-
-                console.log('New battle state:', {
-                    phase: battleState.phase,
-                    currentPlayer: battleState.currentPlayer,
-                    currentPlayerNick: nicknames[battleState.currentPlayer],
-                    round: battleState.round
+                // Помечаем текущий корабль как spent если он был активирован
+                battleState.ships.forEach(ship => {
+                    if (ship.owner === socket.id && ship.status === 'activated') {
+                        ship.status = 'spent';
+                    }
                 });
 
-                // Отправляем обновленное состояние
-                console.log('Sending updated battleState to room:', `battle_${roomId}`);
-                io.to(`battle_${roomId}`).emit('battleState', battleState);
+                // Проверяем, может ли противник сделать ход
+                const otherPlayer = room.players.find(id => id !== socket.id);
+                const canOpponentMove = checkIfPlayerCanActivate(battleState, otherPlayer);
+                const canCurrentPlayerMove = checkIfPlayerCanActivate(battleState, socket.id);
 
-                // Логируем смену хода
+                if (canOpponentMove) {
+                    // Передаем ход противнику
+                    battleState.currentPlayer = otherPlayer;
+                    restoreMovementPoints(battleState.ships, otherPlayer);
+                } else if (canCurrentPlayerMove) {
+                    // Ход остается у текущего игрока
+                    logMessage = `${nicknames[socket.id]} продолжает ход (у противника нет доступных активаций)`;
+                } else {
+                    // Никто не может ходить - новый раунд
+                    startNewRound(battleState, room, roomId);
+                    return;
+                }
+
+                // Отправляем обновленное состояние
+                io.to(`battle_${roomId}`).emit('battleState', battleState);
                 io.to(`battle_${roomId}`).emit('turnChanged', {
                     currentPlayer: battleState.currentPlayer,
                     currentPlayerNick: nicknames[battleState.currentPlayer],
                     round: battleState.round,
-                    isNewRound: isNewRound
+                    isNewRound: false
                 });
-
-            } else {
-                console.log('ERROR: Unknown phase:', battleState.phase);
-                return;
             }
-
-            console.log('=== END TURN EVENT COMPLETED ===');
         });
 
         socket.on('activateShip', ({ roomId, shipId, diceValue }) => {

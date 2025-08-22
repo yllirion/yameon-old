@@ -9,6 +9,7 @@ const socket = io();
 let myNick = null;
 let currentRoomId = null;
 let currentBattleRoomId = null;  // ← Добавляем переменную
+let selectedFleet = null;
 
 /**
  * Переключает видимые view
@@ -18,13 +19,13 @@ function showView(name) {
   document.querySelectorAll('[id$="View"]').forEach(v => v.classList.add('hidden'));
   document.getElementById(name + 'View').classList.remove('hidden');
   if (name === 'fleet') {
-    // ← СОБСТВЕННОЕ ИЗМЕНЕНИЕ ↓
     const currentFleetElem = document.getElementById('currentFleet');
-    currentFleetElem.textContent = selectedFleet
-        ? `Текущий флот: ${selectedFleet.name}`
+    const fleet = getSelectedFleet();
+    currentFleetElem.textContent = fleet
+        ? `Текущий флот: ${fleet.name}`
         : 'Текущий флот: —';
 
-    loadFleets();  // загружает и рендерит сетку флотов
+
   }
 
   if (name === 'editor') loadShipProjects();

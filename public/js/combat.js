@@ -1,5 +1,6 @@
 // public/js/combat.js
 
+
 /**
  * Модуль боевой системы
  * Отвечает за:
@@ -8,6 +9,7 @@
  * - Обработку выстрелов
  * - Визуализацию боевых действий
  */
+
 
 // Направления для кубических координат
 const CUBE_DIRECTIONS = [
@@ -30,6 +32,16 @@ let combatState = {
 
 let combatSocket = null;
 let combatRoomId = null;
+let lastBattleState = null;
+let currentPlayerId = null;
+let autoActivateShip = null;
+
+// Функция для установки зависимостей
+export function setCombatDependencies(battleState, playerId, activateFunc) {
+    lastBattleState = battleState;
+    currentPlayerId = playerId;
+    autoActivateShip = activateFunc;
+}
 
 /**
  * Инициализация боевого модуля
@@ -395,32 +407,37 @@ function handleFireCommand(targetId, attackerId) {
         return;
     }
 
-    console.log('Firing weapons:', {
-        roomId: combatRoomId,
-        attackerId,
-        targetId,
-        weaponIds: selectedWeapons,
-        socket: combatSocket ? 'exists' : 'null'
-    });
-
     // Проверяем что socket и roomId инициализированы
-    if (!combatSocket) {
-        console.error('Combat socket not initialized!');
+    if (!combatSocket || !combatRoomId) {
+        console.error('Combat socket or roomId not initialized!');
         return;
     }
 
-    if (!combatRoomId) {
-        console.error('Combat roomId not initialized!');
-        return;
+    // Автоактивация корабля если нужно
+    const attacker = lastBattleState.ships.find(s => s.id === attackerId);
+    if (attacker && attacker.status === 'ready') {
+        if (!autoActivateShip(attackerId, combatRoomId, combatSocket)) {
+            alert('Нет подходящих кубов для активации корабля!');
+            return;
+        }
+        // Ждем немного чтобы активация прошла
+        setTimeout(() => {
+            combatSocket.emit('fireWeapons', {
+                roomId: combatRoomId,
+                attackerId: attackerId,
+                targetId: targetId,
+                weaponIds: selectedWeapons
+            });
+        }, 100);
+    } else {
+        // Корабль уже активирован - сразу стреляем
+        combatSocket.emit('fireWeapons', {
+            roomId: combatRoomId,
+            attackerId: attackerId,
+            targetId: targetId,
+            weaponIds: selectedWeapons
+        });
     }
-
-    // Отправляем команду
-    combatSocket.emit('fireWeapons', {
-        roomId: combatRoomId,
-        attackerId: attackerId,
-        targetId: targetId,
-        weaponIds: selectedWeapons
-    });
 
     clearCombatHighlights();
 }

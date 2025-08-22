@@ -12,6 +12,7 @@ import {
 } from './hexmap.js';
 
 import { initCombatSystem, testCombatSystem, setCombatRoomId } from './combat.js';
+import { setCombatDependencies } from './combat.js';
 
 /** Базовые характеристики по классу – используется для карточек и логов */
 const classStats = {
@@ -163,6 +164,26 @@ function setupBattleClickHandlers(state, socket, playerId) {
         const shipId = shipIcon.dataset.shipId;
         const ship = state.ships.find(s => s.id === shipId);
 
+        if (!ship) return;
+
+        // Определяем в какой контейнер показывать карточку
+        const cardContainerId = ship.owner === playerId ? 'playerShipCard' : 'enemyShipCard';
+
+        shipIcon.addEventListener('mouseenter', () => {
+            const container = document.getElementById(cardContainerId);
+            if (container && !container.dataset.fixed) {
+                container.innerHTML = '';
+                container.appendChild(createShipCard(ship, false));
+            }
+        });
+
+        shipIcon.addEventListener('mouseleave', () => {
+            const container = document.getElementById(cardContainerId);
+            if (container && !container.dataset.fixed) {
+                container.innerHTML = '';
+            }
+        });
+
         if (ship && ship.owner === playerId && state.currentPlayer === playerId) {
             if (ship.status === 'activated') {
                 // Для активированного корабля - движение и кнопка завершения
@@ -191,6 +212,14 @@ function setupBattleClickHandlers(state, socket, playerId) {
                 });
                 shipIcon.classList.add('selected-for-movement');
 
+                const container = document.getElementById('playerShipCard');
+                if (container) {
+                    container.innerHTML = '';
+                    container.appendChild(createShipCard(ship, true)); // true = детальная карточка
+                    container.dataset.fixed = 'true';
+                    container.dataset.shipId = shipId;
+                }
+
                 if (ship.status === 'activated' && ship.currentManeuverability > 0) {
                     addRotationControls(
                         ship,
@@ -218,29 +247,57 @@ function setupBattleClickHandlers(state, socket, playerId) {
 
     // Обработчики кликов по гексам для движения
     document.querySelectorAll('#hexmap polygon').forEach(poly => {
+        let clickTimer = null;
+        let clickCount = 0;
+
         poly.onclick = (e) => {
             const q = parseInt(poly.dataset.q);
             const r = parseInt(poly.dataset.r);
             const s = parseInt(poly.dataset.s);
 
-            console.log('Hex clicked:', { q, r, s });
+            if (!isMovementCellAvailable(q, r, s)) return;
 
-            // Проверяем, доступен ли этот гекс для движения
-            if (isMovementCellAvailable(q, r, s)) {
+            clickCount++;
+
+            if (clickCount === 1) {
+                // Одиночный клик - предпросмотр маршрута
+                clickTimer = setTimeout(() => {
+                    clickCount = 0;
+                    // Показываем предпросмотр пути (можно добавить визуализацию)
+                    console.log('Preview path to:', { q, r, s });
+                }, 300); // 300мс для определения двойного клика
+
+            } else if (clickCount === 2) {
+                // Двойной клик - движение + автоактивация
+                clearTimeout(clickTimer);
+                clickCount = 0;
+
                 const selectedShip = getSelectedShipForMovement();
                 if (selectedShip && state.currentPlayer === playerId) {
-                    console.log('Moving ship to:', { q, r, s });
 
-                    // Отправляем команду движения на сервер
-                    socket.emit('moveShip', {
-                        roomId: state.id,
-                        shipId: selectedShip.id,
-                        targetPosition: { q, r, s }
-                    });
+                    // Автоактивация если корабль еще не активирован
+                    if (selectedShip.status === 'ready') {
+                        if (!autoActivateShip(selectedShip.id, state.id, socket)) {
+                            return; // Не удалось активировать
+                        }
+                        // Ждем немного чтобы активация прошла
+                        setTimeout(() => {
+                            socket.emit('moveShip', {
+                                roomId: state.id,
+                                shipId: selectedShip.id,
+                                targetPosition: { q, r, s }
+                            });
+                        }, 100);
+                    } else {
+                        // Корабль уже активирован - просто двигаем
+                        socket.emit('moveShip', {
+                            roomId: state.id,
+                            shipId: selectedShip.id,
+                            targetPosition: { q, r, s }
+                        });
+                    }
 
-                    // Очищаем выделение
                     clearMovementHighlight();
-
                     logBattle(`Корабль перемещается в (${q},${r})`);
                 }
             }
@@ -302,6 +359,7 @@ export function initBattleUI(showView, socket, playerId) {
 
         lastBattleState = state;
         currentBattleRoomId = state.id;
+        setCombatDependencies(state, playerId, autoActivateShip);
 
         setCombatRoomId(state.id)
 
@@ -652,7 +710,11 @@ function renderBattlePanel(containerId, ships, dicePool, playerName) {
     }
 
     // Затем добавляем флот
-    renderFleetList(container, ships);
+    //renderFleetList(container, ships);
+    const cardContainer = document.createElement('div');
+    cardContainer.id = playerName === 'ваши' ? 'playerShipCard' : 'enemyShipCard';
+    cardContainer.className = 'ship-hover-card-container';
+    container.appendChild(cardContainer);
 }
 
 /** Отрисовка панели кубиков принимает контейнер напрямую */
@@ -767,6 +829,32 @@ function highlightActivatableShips(diceValue) {
             }
         }
     });
+}
+
+function autoActivateShip(shipId, roomId, socket) {
+    const ship = lastBattleState.ships.find(s => s.id === shipId);
+    if (!ship || ship.status !== 'ready') return false;
+
+    const playerDice = lastBattleState.dicePools[currentPlayerId];
+    if (!playerDice) return false;
+
+    const activationValue = classStats[ship.shipClass].activation;
+
+    // Ищем минимальный подходящий куб
+    for (let value = activationValue; value <= 6; value++) {
+        if (playerDice.current[value] && playerDice.current[value] > 0) {
+            console.log(`Auto-activating ship with dice ${value}`);
+            socket.emit('activateShip', {
+                roomId: roomId,
+                shipId: shipId,
+                diceValue: value
+            });
+            return true;
+        }
+    }
+
+    logBattle(`Нет подходящих кубов для активации ${ship.shipClass} (нужен ${activationValue}+)`);
+    return false;
 }
 
 function handleCombatRotation(socket, roomId, shipId, direction, ship) {
@@ -1046,6 +1134,51 @@ function generateDicePool(round, previousOnes = 0) {
     }
 
     return pool;
+}
+
+function createShipCard(ship, isDetailed = false) {
+    const projectInfo = getProjectInfo(ship.projectId);
+    const projectName = getProjectName(ship.projectId);
+    const stats = projectInfo || classStats[ship.shipClass];
+
+    const maxHP = stats.activation;
+    const hpPercent = (ship.hp / maxHP) * 100;
+    const speedPercent = (ship.currentSpeed / ship.maxSpeed) * 100;
+    const maneuverPercent = (ship.currentManeuverability / ship.maxManeuverability) * 100;
+
+    const card = document.createElement('div');
+    card.className = 'ship-hover-card';
+    card.innerHTML = `
+        <div class="ship-card-header">
+            <span class="ship-name">${projectName}</span>
+            <span class="ship-class-badge">${ship.shipClass}</span>
+        </div>
+        <div class="ship-stats">
+            <div class="hp-bar">
+                <div class="hp-fill" style="width: ${hpPercent}%; background-color: ${hpPercent > 60 ? '#4CAF50' : hpPercent > 30 ? '#FF9800' : '#F44336'}"></div>
+                <span class="hp-text">${ship.hp}/${maxHP} HP</span>
+            </div>
+            <div class="movement-bars">
+                <div class="speed-bar">
+                    <div class="speed-fill" style="width: ${speedPercent}%; background-color: ${speedPercent > 60 ? '#2196F3' : '#F44336'}"></div>
+                    <span class="speed-text">${ship.currentSpeed}/${ship.maxSpeed} Скорость</span>
+                </div>
+                <div class="maneuver-bar">
+                    <div class="maneuver-fill" style="width: ${maneuverPercent}%; background-color: ${maneuverPercent > 60 ? '#9C27B0' : '#F44336'}"></div>
+                    <span class="maneuver-text">${ship.currentManeuverability}/${ship.maxManeuverability} Манёвр</span>
+                </div>
+            </div>
+            ${isDetailed ? `
+                <div class="ship-details">
+                    <span>Позиция: (${ship.position.q}, ${ship.position.r})</span>
+                    <span>Броня: ${stats.armor}</span>
+                    <span>Активация: ${stats.activation}+</span>
+                </div>
+            ` : ''}
+        </div>
+    `;
+
+    return card;
 }
 
 /** Добавляет CSS стили для поворота кораблей и движения */
