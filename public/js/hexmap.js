@@ -117,7 +117,48 @@ export function drawHexGrid(gamePhase = null, currentPlayerId = null, playerId =
             poly.setAttribute('data-r', r);
             poly.setAttribute('data-s', s);
 
+            poly.setAttribute('data-original-fill', fillColor);
+
+            poly.addEventListener('mouseenter', () => {
+                if (poly.classList.contains('movement-available') ||
+                    poly.classList.contains('weapon-arc-highlight')) {
+                    return;
+                }
+
+                if (gamePhase === 'placement') {
+                    const zone = getHexZone({ q, r, s });
+                    // Подсветка только для своей зоны расстановки
+                    if ((zone === 'blue' && isFirstPlayer) || (zone === 'yellow' && !isFirstPlayer)) {
+                        poly.style.filter = 'brightness(1.2)';
+                    }
+                } else if (poly !== selectedHex) {
+                    poly.setAttribute('fill', '#ccf');
+                }
+            });
+
+            poly.addEventListener('mouseleave', () => {
+                if (poly.classList.contains('movement-available')) {
+                    poly.setAttribute('fill', 'rgba(52,211,153,0.3)');
+                    return;
+                }
+                if (poly.classList.contains('weapon-arc-highlight')) {
+                    poly.setAttribute('fill', 'rgba(239, 68, 68, 0.3)');
+                    return;
+                }
+
+                // Сброс фильтра яркости
+                poly.style.filter = '';
+
+                // Восстановление исходного цвета
+                if (poly !== selectedHex) {
+                    // Получаем сохраненный исходный цвет
+                    const originalFill = poly.getAttribute('data-original-fill') || '#dde';
+                    poly.setAttribute('fill', originalFill);
+                }
+            });
+
             // Модифицируем hover эффект для зон расстановки
+            /*
             poly.addEventListener('mouseenter', () => {
                 if (poly.classList.contains('movement-available') ||
                     poly.classList.contains('weapon-arc-highlight')) {
@@ -151,6 +192,7 @@ export function drawHexGrid(gamePhase = null, currentPlayerId = null, playerId =
                     poly.setAttribute('fill', '#dde');
                 }
             });
+             */
 
             svg.appendChild(poly);
         }
@@ -332,6 +374,11 @@ export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onR
         return;
     }
 
+    if (!isPlacementPhase && ship.currentManeuverability <= 0 && !ship.hasFreeTurn) {
+        console.log('No maneuverability points and no free turn, skipping rotation controls');
+        return;
+    }
+
     const svg = document.getElementById('hexmap');
     if (!svg) return;
 
@@ -441,24 +488,37 @@ function calculateMovementCells(ship, allShips) {
     const out = new Set();
     const seen = new Set();
 
-    // Используем текущие очки движения корабля
-    const currentSP = ship.currentSpeed;
-    const currentMP = ship.currentManeuverability;
+    // ВАЖНО: Используем ТЕКУЩИЕ очки движения, а не максимальные
+    const currentSP = ship.currentSpeed || 0;  // Убираем fallback на maxSpeed
+    const currentMP = ship.currentManeuverability || 0;  // Убираем fallback на maxManeuverability
 
-    console.log(`Client: Calculating movement for ship ${ship.id}: SP=${currentSP}, MP=${currentMP}`);
+    console.log(`Client: Calculating movement for ship ${ship.id}: currentSP=${currentSP}, currentMP=${currentMP}`);
+    console.log(`Ship stats:`, {
+        currentSpeed: ship.currentSpeed,
+        maxSpeed: ship.maxSpeed,
+        currentManeuverability: ship.currentManeuverability,
+        maxManeuverability: ship.maxManeuverability
+    });
 
-    // Ключ состояния: позиция, направление, SP, MP, количество последовательных поворотов
-    const stateKey = (pos, dir, sp, mp, consecutiveTurns) => `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${consecutiveTurns}`;
+    // Если у корабля нет очков движения, возвращаем пустой массив
+    if (currentSP === 0 && currentMP === 0) {
+        console.log('Ship has no movement points, returning empty array');
+        return [];
+    }
+
+    // Ключ состояния: позиция, направление, SP, MP, бесплатный поворот доступен
+    const stateKey = (pos, dir, sp, mp, freeTurnAvailable) =>
+        `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${freeTurnAvailable}`;
 
     const queue = [{
         position: ship.position,
         direction: ship.dir,
-        sp: currentSP,  // Текущие очки скорости
-        mp: currentMP,  // Текущие очки маневренности
-        consecutiveTurns: 0  // Счетчик последовательных поворотов
+        sp: currentSP,
+        mp: currentMP,
+        freeTurnAvailable: false  // Есть ли бесплатный поворот
     }];
 
-    seen.add(stateKey(ship.position, ship.dir, currentSP, currentMP, 0));
+    seen.add(stateKey(ship.position, ship.dir, currentSP, currentMP, false));
 
     while (queue.length > 0) {
         const state = queue.shift();
@@ -470,7 +530,7 @@ function calculateMovementCells(ship, allShips) {
             out.add(`${state.position.q},${state.position.r},${state.position.s}`);
         }
 
-        // Движение вперед (тратит 1 очко скорости, сбрасывает последовательные повороты)
+        // Движение вперед (тратит 1 очко скорости, дает бесплатный поворот)
         if (state.sp > 0) {
             const forwardDir = CUBE_DIRECTIONS[state.direction];
             const newPos = cubeAdd(state.position, forwardDir);
@@ -487,7 +547,7 @@ function calculateMovementCells(ship, allShips) {
             const outOfBounds = Math.abs(newPos.q) > 13 || Math.abs(newPos.r) > 13 || Math.abs(newPos.s) > 13;
 
             if (!isOccupied && !outOfBounds) {
-                const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, 0);
+                const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, true);
                 if (!seen.has(newStateKey)) {
                     seen.add(newStateKey);
                     queue.push({
@@ -495,67 +555,43 @@ function calculateMovementCells(ship, allShips) {
                         direction: state.direction,
                         sp: state.sp - 1,
                         mp: state.mp,
-                        consecutiveTurns: 0  // Движение сбрасывает последовательные повороты
+                        freeTurnAvailable: true  // После движения получаем бесплатный поворот
                     });
                 }
             }
         }
 
-        // Повороты (новая логика маневренности)
-        if (state.mp > 0) {
-            // Поворот на 60° (1 очко маневренности)
-            if (state.consecutiveTurns === 0 || currentMP >= 2) {  // Можно поворачивать если это первый поворот или у нас достаточно маневренности
-                for (const turn of [-1, 1]) { // Лево и право
-                    const newDir = (state.direction + (turn === -1 ? 1 : 5)) % 6;
-                    const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 1, state.consecutiveTurns + 1);
+        // Повороты на 60° (влево и вправо)
+        for (const turn of [-1, 1]) { // -1 = влево, 1 = вправо
+            const newDir = (state.direction + (turn === -1 ? 5 : 1)) % 6;
 
-                    if (!seen.has(newStateKey)) {
-                        seen.add(newStateKey);
-                        queue.push({
-                            position: state.position,
-                            direction: newDir,
-                            sp: state.sp,
-                            mp: state.mp - 1,
-                            consecutiveTurns: state.consecutiveTurns + 1
-                        });
-                    }
-                }
+            let newMP = state.mp;
+            let newFreeTurn = state.freeTurnAvailable;
+
+            // Определяем стоимость поворота
+            if (state.freeTurnAvailable) {
+                // Используем бесплатный поворот
+                newFreeTurn = false;
+                // MP не тратится
+            } else if (state.mp > 0) {
+                // Тратим 1 MP на поворот
+                newMP = state.mp - 1;
+            } else {
+                // Нет ни бесплатного поворота, ни MP - пропускаем
+                continue;
             }
 
-            // Поворот на 120° (2 очка маневренности)
-            if (state.mp >= 2 && currentMP >= 2) {
-                for (const turn of [-2, 2]) {
-                    const newDir = (state.direction + (turn === -2 ? 2 : 4)) % 6;
-                    const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 2, 0);
+            const newStateKey = stateKey(state.position, newDir, state.sp, newMP, newFreeTurn);
 
-                    if (!seen.has(newStateKey)) {
-                        seen.add(newStateKey);
-                        queue.push({
-                            position: state.position,
-                            direction: newDir,
-                            sp: state.sp,
-                            mp: state.mp - 2,
-                            consecutiveTurns: 0  // 120° поворот не считается последовательным
-                        });
-                    }
-                }
-            }
-
-            // Поворот на 180° (3 очка маневренности)
-            if (state.mp >= 3 && currentMP >= 3) {
-                const newDir = (state.direction + 3) % 6;
-                const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 3, 0);
-
-                if (!seen.has(newStateKey)) {
-                    seen.add(newStateKey);
-                    queue.push({
-                        position: state.position,
-                        direction: newDir,
-                        sp: state.sp,
-                        mp: state.mp - 3,
-                        consecutiveTurns: 0  // 180° поворот не считается последовательным
-                    });
-                }
+            if (!seen.has(newStateKey)) {
+                seen.add(newStateKey);
+                queue.push({
+                    position: state.position,
+                    direction: newDir,
+                    sp: state.sp,
+                    mp: newMP,
+                    freeTurnAvailable: newFreeTurn
+                });
             }
         }
     }

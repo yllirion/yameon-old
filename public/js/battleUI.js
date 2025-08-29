@@ -220,7 +220,7 @@ function setupBattleClickHandlers(state, socket, playerId) {
                     container.dataset.shipId = shipId;
                 }
 
-                if (ship.status === 'activated' && ship.currentManeuverability > 0) {
+                if (ship.status === 'activated' && (ship.currentManeuverability > 0 || ship.hasFreeTurn)) {
                     addRotationControls(
                         ship,
                         true,  // isCurrentPlayer
@@ -858,26 +858,27 @@ function autoActivateShip(shipId, roomId, socket) {
 }
 
 function handleCombatRotation(socket, roomId, shipId, direction, ship) {
-    // Проверяем достаточно ли очков маневренности
-    if (ship.currentManeuverability <= 0) {
-        logBattle('Недостаточно очков маневренности для поворота');
-        return;
+    // Проверяем, есть ли бесплатный поворот
+    if (ship.hasFreeTurn) {
+        console.log('Using free turn for rotation');
+        logBattle(`Поворот ${direction === 'left' ? 'налево' : 'направо'} (бесплатный поворот после движения)`);
+    } else {
+        // Проверяем достаточно ли очков маневренности
+        if (ship.currentManeuverability <= 0) {
+            logBattle('Недостаточно очков маневренности для поворота');
+            return;
+        }
+        logBattle(`Поворот ${direction === 'left' ? 'налево' : 'направо'} (−1 манёвренность)`);
     }
 
-    // Определяем стоимость поворота (пока всегда 1)
-    const maneuverCost = 1;
-
-    console.log('Combat rotation:', { shipId, direction, maneuverCost });
+    console.log('Combat rotation:', { shipId, direction, hasFreeTurn: ship.hasFreeTurn });
 
     // Отправляем команду поворота на сервер
     socket.emit('combatRotateShip', {
         roomId: roomId,
         shipId: shipId,
-        direction: direction,
-        maneuverCost: maneuverCost
+        direction: direction
     });
-
-    logBattle(`Поворот ${direction === 'left' ? 'налево' : 'направо'} (−1 манёвренность)`);
 }
 
 /** Отрисовка списка кораблей в бою */
@@ -1168,6 +1169,7 @@ function createShipCard(ship, isDetailed = false) {
                     <span class="maneuver-text">${ship.currentManeuverability}/${ship.maxManeuverability} Манёвр</span>
                 </div>
             </div>
+            ${ship.hasFreeTurn ? '<div class="free-turn-indicator">🔄 Бесплатный поворот доступен</div>' : ''}
             ${isDetailed ? `
                 <div class="ship-details">
                     <span>Позиция: (${ship.position.q}, ${ship.position.r})</span>
@@ -1251,6 +1253,17 @@ function addBattleStyles() {
     
     .ship-icon:hover {
         filter: brightness(1.1);
+    }
+    
+    .free-turn-indicator {
+    background: #4CAF50;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+    font-size: 0.8em;
+    text-align: center;
+    font-weight: bold;
     }
     `;
 
