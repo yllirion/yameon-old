@@ -1,5 +1,6 @@
 // modules/socketHandlers.js
 const { handleFireCommand } = require('./combatHandler')
+const { getHexZone } = require('../public/js/hexmap.js');
 
 module.exports = function(io) {
     // Хранилища комнат и ников
@@ -236,7 +237,7 @@ module.exports = function(io) {
                 );
 
                 // Проверяем границы карты
-                const outOfBounds = Math.abs(newPos.q) > 10 || Math.abs(newPos.r) > 10 || Math.abs(newPos.s) > 10;
+                const outOfBounds = Math.abs(newPos.q) > 13 || Math.abs(newPos.r) > 13 || Math.abs(newPos.s) > 13;
 
                 if (!isOccupied && !outOfBounds) {
                     const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, 0);
@@ -320,6 +321,36 @@ module.exports = function(io) {
 
         console.log(`Movement calculation complete: ${result.length} available cells`);
         return result;
+    }
+
+    function getHexZone(hex) {
+        const { q, r, s } = hex;
+
+        // Размер стороны ромба (радиус от центра)
+        const ZONE_RADIUS = 4; // Для ромба со стороной 9 гексов
+
+        // Синяя зона - центр в (-9, 0, 9)
+        const blueCenter = { q: -9, r: 0, s: 9 };
+        const distFromBlue = Math.abs(q - blueCenter.q) +
+            Math.abs(r - blueCenter.r) +
+            Math.abs(s - blueCenter.s);
+
+        if (distFromBlue <= ZONE_RADIUS * 2) {
+            return 'blue';
+        }
+
+        // Желтая зона - центр в (9, 0, -9)
+        const yellowCenter = { q: 9, r: 0, s: -9 };
+        const distFromYellow = Math.abs(q - yellowCenter.q) +
+            Math.abs(r - yellowCenter.r) +
+            Math.abs(s - yellowCenter.s);
+
+        if (distFromYellow <= ZONE_RADIUS * 2) {
+            return 'yellow';
+        }
+
+        // Все остальное - нейтральная зона (серая)
+        return null;
     }
 
     /**
@@ -514,6 +545,28 @@ module.exports = function(io) {
         );
     }
 
+    function canPlaceShipAt(position, playerId, players) {
+        const { q, r, s } = position;
+
+        // Определяем зону гекса
+        const zone = getHexZone({ q, r, s });
+
+        // Определяем, какой игрок первый
+        const isFirstPlayer = players[0] === playerId;
+
+        // Первый игрок может ставить только в синей зоне
+        if (isFirstPlayer && zone !== 'blue') {
+            return false;
+        }
+
+        // Второй игрок может ставить только в желтой зоне
+        if (!isFirstPlayer && zone !== 'yellow') {
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * Вычисляет направление движения корабля с отладочными логами
      */
@@ -667,6 +720,12 @@ module.exports = function(io) {
             if (!isValidPosition(b.state.ships, position)) {
                 console.log('Invalid position - already occupied');
                 socket.emit('placementError', { message: 'Позиция уже занята' });
+                return;
+            }
+
+            if (!canPlaceShipAt(position, socket.id, room.players)) {
+                console.log('Invalid position - wrong zone');
+                socket.emit('placementError', { message: 'Вы можете размещать корабли только в своей зоне' });
                 return;
             }
 

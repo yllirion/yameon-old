@@ -455,7 +455,7 @@ async function renderPlacement(state, showView, socket, playerId) {
 
     // Рисуем сетку и иконки уже выставленных кораблей
     requestAnimationFrame(() => {
-        drawHexGrid();
+        drawHexGrid('placement', state.currentPlayer, playerId);
         renderPlacedShips(state.ships, playerId);
 
         // Добавляем кнопки поворота для кораблей текущего игрока

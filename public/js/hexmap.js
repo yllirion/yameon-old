@@ -1,8 +1,8 @@
 // public/js/hexmap.js
 
 export const HEX_SIZE = 20;
-export const GRID_W   = 20;
-export const GRID_H   = 20;
+export const GRID_W   = 27;
+export const GRID_H   = 27;
 
 let selectedHex = null;
 let selectedShipForRotation = null; // Корабль, выбранный для поворота
@@ -58,7 +58,7 @@ function cubeDistance(a, b) {
 }
 
 /** Рисует pointy-top гекс-карту в <svg id="hexmap"> используя только кубические координаты */
-export function drawHexGrid() {
+export function drawHexGrid(gamePhase = null, currentPlayerId = null, playerId = null) {
     const svg = document.getElementById('hexmap');
     if (!svg) {
         console.error('SVG element #hexmap not found');
@@ -70,8 +70,10 @@ export function drawHexGrid() {
     const layout = Layout(layout_pointy, Point(HEX_SIZE, HEX_SIZE), Point(w/2, h/2));
     svg.innerHTML = '';
 
-    // Генерируем гексы в кубических координатах
-    const gridRadius = Math.floor(Math.max(GRID_W, GRID_H) / 2);
+    // Определяем, какой игрок какую зону получает
+    const isFirstPlayer = (currentPlayerId === playerId);
+
+    const gridRadius = 13;
 
     for (let q = -gridRadius; q <= gridRadius; q++) {
         const r1 = Math.max(-gridRadius, -q - gridRadius);
@@ -80,8 +82,7 @@ export function drawHexGrid() {
         for (let r = r1; r <= r2; r++) {
             const s = -q - r;
 
-            // Ограничиваем область видимой карты
-            if (Math.abs(q) > 10 || Math.abs(r) > 10 || Math.abs(s) > 10) continue;
+            if (Math.abs(q) > 13 || Math.abs(r) > 13 || Math.abs(s) > 13) continue;
 
             const hex = Hex(q, r, s);
             const pts = polygon_corners(layout, hex)
@@ -91,25 +92,49 @@ export function drawHexGrid() {
             const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
             poly.setAttribute('points', pts);
             poly.setAttribute('stroke', '#333');
-            poly.setAttribute('fill', '#dde');
             poly.setAttribute('stroke-width', '1');
 
-            // Добавляем data-атрибуты для кубических координат
+            // Определяем цвет гекса в зависимости от фазы и зоны
+            let fillColor = '#dde'; // По умолчанию серый
+
+            if (gamePhase === 'placement') {
+                const zone = getHexZone({ q, r, s });
+
+                if (zone === 'blue') {
+                    fillColor = isFirstPlayer ? '#2196F3' : '#1565C0'; // Светло-синий для своей зоны, темнее для чужой
+                    poly.classList.add('placement-zone', 'blue-zone');
+                } else if (zone === 'yellow') {
+                    fillColor = !isFirstPlayer ? '#FFD600' : '#F9A825'; // Светло-желтый для своей зоны, темнее для чужой
+                    poly.classList.add('placement-zone', 'yellow-zone');
+                } else if (zone === 'neutral') {
+                    fillColor = '#BA68C8'; // Фиолетовый
+                    poly.classList.add('neutral-zone');
+                }
+            }
+
+            poly.setAttribute('fill', fillColor);
             poly.setAttribute('data-q', q);
             poly.setAttribute('data-r', r);
             poly.setAttribute('data-s', s);
 
-            // Добавляем hover эффект
+            // Модифицируем hover эффект для зон расстановки
             poly.addEventListener('mouseenter', () => {
                 if (poly.classList.contains('movement-available') ||
                     poly.classList.contains('weapon-arc-highlight')) {
                     return;
                 }
 
-                if (poly !== selectedHex) {
+                if (gamePhase === 'placement' && poly.classList.contains('placement-zone')) {
+                    // Подсветка только для своей зоны
+                    const zone = getHexZone({ q, r, s });
+                    if ((zone === 'blue' && isFirstPlayer) || (zone === 'yellow' && !isFirstPlayer)) {
+                        poly.style.filter = 'brightness(1.2)';
+                    }
+                } else if (poly !== selectedHex) {
                     poly.setAttribute('fill', '#ccf');
                 }
             });
+
             poly.addEventListener('mouseleave', () => {
                 if (poly.classList.contains('movement-available')) {
                     poly.setAttribute('fill', 'rgba(52,211,153,0.3)');
@@ -120,7 +145,9 @@ export function drawHexGrid() {
                     return;
                 }
 
-                if (poly !== selectedHex) {
+                if (gamePhase === 'placement') {
+                    poly.style.filter = '';
+                } else if (poly !== selectedHex) {
                     poly.setAttribute('fill', '#dde');
                 }
             });
@@ -129,7 +156,42 @@ export function drawHexGrid() {
         }
     }
 
-    console.log('Hex grid drawn with cubic coordinates');
+    console.log('Hex grid drawn with zones');
+}
+
+/**
+ * Определяет принадлежность гекса к зоне расстановки
+ * @param {Object} hex - Объект с координатами {q, r, s}
+ * @returns {string} 'blue', 'yellow', 'neutral' или null
+ */
+export function getHexZone(hex) {
+    const { q, r, s } = hex;
+
+    // Размер стороны ромба (радиус от центра)
+    const ZONE_RADIUS = 4; // Для ромба со стороной 9 гексов
+
+    // Синяя зона - центр в (-9, 0, 9)
+    const blueCenter = { q: -9, r: 0, s: 9 };
+    const distFromBlue = Math.abs(q - blueCenter.q) +
+        Math.abs(r - blueCenter.r) +
+        Math.abs(s - blueCenter.s);
+
+    if (distFromBlue <= ZONE_RADIUS * 2) {
+        return 'blue';
+    }
+
+    // Желтая зона - центр в (9, 0, -9)
+    const yellowCenter = { q: 9, r: 0, s: -9 };
+    const distFromYellow = Math.abs(q - yellowCenter.q) +
+        Math.abs(r - yellowCenter.r) +
+        Math.abs(s - yellowCenter.s);
+
+    if (distFromYellow <= ZONE_RADIUS * 2) {
+        return 'yellow';
+    }
+
+    // Все остальное - нейтральная зона (серая)
+    return null;
 }
 
 function onHexClick(evt) {
@@ -289,24 +351,41 @@ export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onR
     controlGroup.setAttribute('data-ship-id', ship.id);
     controlGroup.style.display = 'none'; // Скрываем по умолчанию
 
+    // Получаем угол направления корабля
+    const shipAngle = HEX_DIRECTIONS[ship.dir || 0];
+
+    // Расстояние от центра корабля до кнопок
+    const buttonDistance = HEX_SIZE * 1.8; // Увеличил расстояние для лучшей видимости
+
+    // Углы для размещения кнопок (слева и справа от носа)
+    const leftButtonAngle = shipAngle - Math.PI / 8;
+    const rightButtonAngle = shipAngle + Math.PI / 8;
+
+    // Вычисляем позиции кнопок
+    const leftButtonX = x + Math.cos(leftButtonAngle) * buttonDistance;
+    const leftButtonY = y + Math.sin(leftButtonAngle) * buttonDistance;
+
+    const rightButtonX = x + Math.cos(rightButtonAngle) * buttonDistance;
+    const rightButtonY = y + Math.sin(rightButtonAngle) * buttonDistance;
+
     // Кнопка поворота влево
     const leftButton = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     leftButton.classList.add('rotation-button');
     leftButton.style.cursor = 'pointer';
 
     const leftCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    leftCircle.setAttribute('cx', x - 20);
-    leftCircle.setAttribute('cy', y + HEX_SIZE + 15);
-    leftCircle.setAttribute('r', 12);
+    leftCircle.setAttribute('cx', leftButtonX);
+    leftCircle.setAttribute('cy', leftButtonY);
+    leftCircle.setAttribute('r', 8);
     leftCircle.setAttribute('fill', '#2196F3');
     leftCircle.setAttribute('stroke', '#fff');
     leftCircle.setAttribute('stroke-width', 2);
 
     const leftText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    leftText.setAttribute('x', x - 20);
-    leftText.setAttribute('y', y + HEX_SIZE + 20);
+    leftText.setAttribute('x', leftButtonX);
+    leftText.setAttribute('y', leftButtonY + 5);
     leftText.setAttribute('text-anchor', 'middle');
-    leftText.setAttribute('font-size', '14');
+    leftText.setAttribute('font-size', '10');
     leftText.setAttribute('font-weight', 'bold');
     leftText.setAttribute('fill', '#fff');
     leftText.textContent = 'L';
@@ -320,18 +399,18 @@ export function addRotationControls(ship, isCurrentPlayer, isPlacementPhase, onR
     rightButton.style.cursor = 'pointer';
 
     const rightCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    rightCircle.setAttribute('cx', x + 20);
-    rightCircle.setAttribute('cy', y + HEX_SIZE + 15);
-    rightCircle.setAttribute('r', 12);
+    rightCircle.setAttribute('cx', rightButtonX);
+    rightCircle.setAttribute('cy', rightButtonY);
+    rightCircle.setAttribute('r', 8);
     rightCircle.setAttribute('fill', '#2196F3');
     rightCircle.setAttribute('stroke', '#fff');
     rightCircle.setAttribute('stroke-width', 2);
 
     const rightText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    rightText.setAttribute('x', x + 20);
-    rightText.setAttribute('y', y + HEX_SIZE + 20);
+    rightText.setAttribute('x', rightButtonX);
+    rightText.setAttribute('y', rightButtonY + 5);
     rightText.setAttribute('text-anchor', 'middle');
-    rightText.setAttribute('font-size', '14');
+    rightText.setAttribute('font-size', '10');
     rightText.setAttribute('font-weight', 'bold');
     rightText.setAttribute('fill', '#fff');
     rightText.textContent = 'R';
@@ -405,7 +484,7 @@ function calculateMovementCells(ship, allShips) {
             );
 
             // Проверяем границы карты
-            const outOfBounds = Math.abs(newPos.q) > 10 || Math.abs(newPos.r) > 10 || Math.abs(newPos.s) > 10;
+            const outOfBounds = Math.abs(newPos.q) > 13 || Math.abs(newPos.r) > 13 || Math.abs(newPos.s) > 13;
 
             if (!isOccupied && !outOfBounds) {
                 const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, 0);
