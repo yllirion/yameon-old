@@ -176,13 +176,16 @@ module.exports = function(io) {
                 ship.currentSpeed = ship.maxSpeed;
                 ship.currentManeuverability = ship.maxManeuverability;
 
+                // Сбрасываем флаг бесплатного поворота
+                ship.hasFreeTurn = false;
+
                 if (ship.hp > 0) {
                     ship.status = 'ready';
                 }
 
                 ship.usedWeapons = [];
 
-                console.log(`Restored ship ${ship.id}: Status=${ship.status}, Speed ${ship.currentSpeed}/${ship.maxSpeed}, Maneuverability ${ship.currentManeuverability}/${ship.maxManeuverability}`);
+                console.log(`Restored ship ${ship.id}: Status=${ship.status}, Speed ${ship.currentSpeed}/${ship.maxSpeed}, Maneuverability ${ship.currentManeuverability}/${ship.maxManeuverability}, FreeTurn=false`);
             }
         });
     }
@@ -194,24 +197,31 @@ module.exports = function(io) {
         const out = new Set();
         const seen = new Set();
 
-        // Используем текущие очки движения корабля
-        const currentSP = ship.currentSpeed || ship.maxSpeed || 0;
-        const currentMP = ship.currentManeuverability || ship.maxManeuverability || 0;
+        // ВАЖНО: Используем ТЕКУЩИЕ очки движения без fallback
+        const currentSP = ship.currentSpeed || 0;
+        const currentMP = ship.currentManeuverability || 0;
 
-        console.log(`Calculating movement for ship ${ship.id}: SP=${currentSP}, MP=${currentMP}`);
+        console.log(`Calculating movement for ship ${ship.id}: currentSP=${currentSP}, currentMP=${currentMP}`);
 
-        // Ключ состояния: позиция, направление, SP, MP, количество последовательных поворотов
-        const stateKey = (pos, dir, sp, mp, consecutiveTurns) => `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${consecutiveTurns}`;
+        // Если у корабля нет очков движения, возвращаем пустой массив
+        if (currentSP === 0 && currentMP === 0) {
+            console.log('Ship has no movement points, returning empty array');
+            return [];
+        }
+
+        // Ключ состояния: позиция, направление, SP, MP, бесплатный поворот доступен
+        const stateKey = (pos, dir, sp, mp, freeTurnAvailable) =>
+            `${pos.q},${pos.r},${pos.s},${dir},${sp},${mp},${freeTurnAvailable}`;
 
         const queue = [{
             position: ship.position,
             direction: ship.dir,
-            sp: currentSP,  // Текущие очки скорости
-            mp: currentMP,  // Текущие очки маневренности
-            consecutiveTurns: 0  // Счетчик последовательных поворотов
+            sp: currentSP,
+            mp: currentMP,
+            freeTurnAvailable: false  // Есть ли бесплатный поворот
         }];
 
-        seen.add(stateKey(ship.position, ship.dir, currentSP, currentMP, 0));
+        seen.add(stateKey(ship.position, ship.dir, currentSP, currentMP, false));
 
         while (queue.length > 0) {
             const state = queue.shift();
@@ -223,7 +233,7 @@ module.exports = function(io) {
                 out.add(`${state.position.q},${state.position.r},${state.position.s}`);
             }
 
-            // Движение вперед (тратит 1 очко скорости, сбрасывает последовательные повороты)
+            // Движение вперед (тратит 1 очко скорости, дает бесплатный поворот)
             if (state.sp > 0) {
                 const forwardDir = HEX_DIRECTIONS[state.direction];
                 const newPos = cubeAdd(state.position, forwardDir);
@@ -240,7 +250,7 @@ module.exports = function(io) {
                 const outOfBounds = Math.abs(newPos.q) > 13 || Math.abs(newPos.r) > 13 || Math.abs(newPos.s) > 13;
 
                 if (!isOccupied && !outOfBounds) {
-                    const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, 0);
+                    const newStateKey = stateKey(newPos, state.direction, state.sp - 1, state.mp, true);
                     if (!seen.has(newStateKey)) {
                         seen.add(newStateKey);
                         queue.push({
@@ -248,67 +258,43 @@ module.exports = function(io) {
                             direction: state.direction,
                             sp: state.sp - 1,
                             mp: state.mp,
-                            consecutiveTurns: 0  // Движение сбрасывает последовательные повороты
+                            freeTurnAvailable: true  // После движения получаем бесплатный поворот
                         });
                     }
                 }
             }
 
-            // Повороты (новая логика маневренности)
-            if (state.mp > 0) {
-                // Поворот на 60° (1 очко маневренности)
-                if (state.consecutiveTurns === 0 || currentMP >= 2) {  // Можно поворачивать если это первый поворот или у нас достаточно маневренности
-                    for (const turn of [-1, 1]) { // Лево и право
-                        const newDir = (state.direction + (turn === -1 ? 1 : 5)) % 6;
-                        const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 1, state.consecutiveTurns + 1);
+            // Повороты на 60° (влево и вправо)
+            for (const turn of [-1, 1]) { // -1 = влево, 1 = вправо
+                const newDir = (state.direction + (turn === -1 ? 1 : 5)) % 6;
 
-                        if (!seen.has(newStateKey)) {
-                            seen.add(newStateKey);
-                            queue.push({
-                                position: state.position,
-                                direction: newDir,
-                                sp: state.sp,
-                                mp: state.mp - 1,
-                                consecutiveTurns: state.consecutiveTurns + 1
-                            });
-                        }
-                    }
+                let newMP = state.mp;
+                let newFreeTurn = state.freeTurnAvailable;
+
+                // Определяем стоимость поворота
+                if (state.freeTurnAvailable) {
+                    // Используем бесплатный поворот
+                    newFreeTurn = false;
+                    // MP не тратится
+                } else if (state.mp > 0) {
+                    // Тратим 1 MP на поворот
+                    newMP = state.mp - 1;
+                } else {
+                    // Нет ни бесплатного поворота, ни MP - пропускаем
+                    continue;
                 }
 
-                // Поворот на 120° (2 очка маневренности)
-                if (state.mp >= 2 && currentMP >= 2) {
-                    for (const turn of [-2, 2]) {
-                        const newDir = (state.direction + (turn === -2 ? 2 : 4)) % 6;
-                        const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 2, 0);
+                const newStateKey = stateKey(state.position, newDir, state.sp, newMP, newFreeTurn);
 
-                        if (!seen.has(newStateKey)) {
-                            seen.add(newStateKey);
-                            queue.push({
-                                position: state.position,
-                                direction: newDir,
-                                sp: state.sp,
-                                mp: state.mp - 2,
-                                consecutiveTurns: 0  // 120° поворот не считается последовательным
-                            });
-                        }
-                    }
-                }
-
-                // Поворот на 180° (3 очка маневренности)
-                if (state.mp >= 3 && currentMP >= 3) {
-                    const newDir = (state.direction + 3) % 6;
-                    const newStateKey = stateKey(state.position, newDir, state.sp, state.mp - 3, 0);
-
-                    if (!seen.has(newStateKey)) {
-                        seen.add(newStateKey);
-                        queue.push({
-                            position: state.position,
-                            direction: newDir,
-                            sp: state.sp,
-                            mp: state.mp - 3,
-                            consecutiveTurns: 0  // 180° поворот не считается последовательным
-                        });
-                    }
+                if (!seen.has(newStateKey)) {
+                    seen.add(newStateKey);
+                    queue.push({
+                        position: state.position,
+                        direction: newDir,
+                        sp: state.sp,
+                        mp: newMP,
+                        freeTurnAvailable: newFreeTurn
+                    });
                 }
             }
         }
@@ -528,6 +514,128 @@ module.exports = function(io) {
             round: battleState.round,
             isNewRound: true
         });
+    }
+
+    function calculatePathCost(ship, targetPosition, allShips) {
+        // Используем модифицированный A* для поиска оптимального пути
+        const start = {
+            position: ship.position,
+            direction: ship.dir,
+            sp: ship.currentSpeed,
+            mp: ship.currentManeuverability,
+            freeTurnAvailable: false,
+            speedUsed: 0,
+            maneuverUsed: 0
+        };
+
+        const goal = targetPosition;
+        const openSet = [start];
+        const closedSet = new Set();
+        const cameFrom = new Map();
+
+        const stateKey = (state) =>
+            `${state.position.q},${state.position.r},${state.position.s},${state.direction},${state.freeTurnAvailable}`;
+
+        while (openSet.length > 0) {
+            // Находим состояние с минимальной стоимостью
+            openSet.sort((a, b) => {
+                const costA = a.speedUsed + a.maneuverUsed;
+                const costB = b.speedUsed + b.maneuverUsed;
+                return costA - costB;
+            });
+
+            const current = openSet.shift();
+            const currentKey = stateKey(current);
+
+            // Достигли цели?
+            if (current.position.q === goal.q &&
+                current.position.r === goal.r &&
+                current.position.s === goal.s) {
+                return {
+                    speedCost: current.speedUsed,
+                    maneuverCost: current.maneuverUsed,
+                    finalDirection: current.direction
+                };
+            }
+
+            if (closedSet.has(currentKey)) continue;
+            closedSet.add(currentKey);
+
+            // Генерируем соседей
+            // 1. Движение вперед
+            if (current.sp > 0) {
+                const forwardDir = HEX_DIRECTIONS[current.direction];
+                const newPos = cubeAdd(current.position, forwardDir);
+
+                const isOccupied = allShips.some(s =>
+                    s.id !== ship.id &&
+                    s.position.q === newPos.q &&
+                    s.position.r === newPos.r &&
+                    s.position.s === newPos.s
+                );
+
+                const outOfBounds = Math.abs(newPos.q) > 13 ||
+                    Math.abs(newPos.r) > 13 ||
+                    Math.abs(newPos.s) > 13;
+
+                if (!isOccupied && !outOfBounds) {
+                    const neighbor = {
+                        position: newPos,
+                        direction: current.direction,
+                        sp: current.sp - 1,
+                        mp: current.mp,
+                        freeTurnAvailable: true,  // Получаем бесплатный поворот после движения
+                        speedUsed: current.speedUsed + 1,
+                        maneuverUsed: current.maneuverUsed
+                    };
+
+                    const neighborKey = stateKey(neighbor);
+                    if (!closedSet.has(neighborKey)) {
+                        openSet.push(neighbor);
+                    }
+                }
+            }
+
+            // 2. Повороты
+            for (const turn of [-1, 1]) {
+                const newDir = (current.direction + (turn === -1 ? 1 : 5)) % 6;
+
+                let canTurn = false;
+                let newMP = current.mp;
+                let newManeuverUsed = current.maneuverUsed;
+                let newFreeTurn = current.freeTurnAvailable;
+
+                if (current.freeTurnAvailable) {
+                    // Используем бесплатный поворот
+                    canTurn = true;
+                    newFreeTurn = false;
+                } else if (current.mp > 0) {
+                    // Используем MP
+                    canTurn = true;
+                    newMP = current.mp - 1;
+                    newManeuverUsed = current.maneuverUsed + 1;
+                }
+
+                if (canTurn) {
+                    const neighbor = {
+                        position: current.position,
+                        direction: newDir,
+                        sp: current.sp,
+                        mp: newMP,
+                        freeTurnAvailable: newFreeTurn,
+                        speedUsed: current.speedUsed,
+                        maneuverUsed: newManeuverUsed
+                    };
+
+                    const neighborKey = stateKey(neighbor);
+                    if (!closedSet.has(neighborKey)) {
+                        openSet.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        return null; // Путь не найден
     }
 
     /**
@@ -882,56 +990,44 @@ module.exports = function(io) {
                 return;
             }
 
-            // Рассчитываем стоимость движения
-            const distance = cubeDistance(ship.position, targetPosition);
-            const requiredSpeed = distance;
+            // Новый алгоритм расчета стоимости движения
+            const pathCost = calculatePathCost(ship, targetPosition, b.state.ships);
 
-            // Проверяем достаточность очков скорости
-            if (ship.currentSpeed < requiredSpeed) {
+            if (!pathCost) {
+                socket.emit('movementError', { message: 'Невозможно построить путь' });
+                return;
+            }
+
+            // Проверяем достаточность очков
+            if (ship.currentSpeed < pathCost.speedCost) {
                 socket.emit('movementError', { message: 'Недостаточно очков скорости' });
                 return;
             }
 
-            // Вычисляем поворот и его стоимость
-            let requiredManeuverability = 0;
-            if (distance > 0) {
-                const targetDirection = getDirectionToTarget(ship.position, targetPosition);
-                const directionDiff = Math.abs(targetDirection - ship.dir);
-                const actualDiff = Math.min(directionDiff, 6 - directionDiff); // Кратчайший поворот
-
-                if (actualDiff === 1) requiredManeuverability = 1;      // 60°
-                else if (actualDiff === 2) requiredManeuverability = 2; // 120°
-                else if (actualDiff === 3) requiredManeuverability = 3; // 180°
-
-                // Проверяем достаточность очков маневренности
-                if (ship.currentManeuverability < requiredManeuverability) {
-                    socket.emit('movementError', { message: 'Недостаточно очков маневренности для поворота' });
-                    return;
-                }
-
-                // Поворачиваем корабль
-                ship.dir = targetDirection;
+            if (ship.currentManeuverability < pathCost.maneuverCost) {
+                socket.emit('movementError', { message: 'Недостаточно очков маневренности' });
+                return;
             }
 
             // Обновляем позицию корабля
             const oldPosition = { ...ship.position };
             ship.position = targetPosition;
+            ship.dir = pathCost.finalDirection;
 
             // Тратим очки движения
-            ship.currentSpeed -= requiredSpeed;
-            ship.currentManeuverability -= requiredManeuverability;
+            ship.currentSpeed -= pathCost.speedCost;
+            ship.currentManeuverability -= pathCost.maneuverCost;
+
+            // ВАЖНО: Если корабль переместился (потратил скорость), он получает бесплатный поворот
+            if (pathCost.speedCost > 0) {
+                ship.hasFreeTurn = true;
+                console.log('Ship gained free turn after movement');
+            }
 
             console.log(`Ship ${shipId} moved from (${oldPosition.q},${oldPosition.r},${oldPosition.s}) to (${targetPosition.q},${targetPosition.r},${targetPosition.s})`);
-            console.log(`Movement cost: ${requiredSpeed} speed, ${requiredManeuverability} maneuverability`);
+            console.log(`Movement cost: ${pathCost.speedCost} speed, ${pathCost.maneuverCost} maneuverability`);
+            console.log(`Free turn available: ${ship.hasFreeTurn}`);
             console.log(`Remaining points: ${ship.currentSpeed}/${ship.maxSpeed} speed, ${ship.currentManeuverability}/${ship.maxManeuverability} maneuverability`);
-
-            console.log('Ship state before sending update:', {
-                id: ship.id,
-                currentSpeed: ship.currentSpeed,
-                maxSpeed: ship.maxSpeed,
-                currentManeuverability: ship.currentManeuverability,
-                maxManeuverability: ship.maxManeuverability
-            });
 
             // Отправляем обновленное состояние
             io.to(`battle_${roomId}`).emit('battleState', b.state);
@@ -945,7 +1041,7 @@ module.exports = function(io) {
         /**
          * Поворот корабля в боевой фазе
          */
-        socket.on('combatRotateShip', ({ roomId, shipId, direction, maneuverCost }) => {
+        socket.on('combatRotateShip', ({ roomId, shipId, direction }) => {
             console.log('Combat rotate ship:', { roomId, shipId, direction });
 
             const room = rooms[roomId];
@@ -957,8 +1053,18 @@ module.exports = function(io) {
             const ship = b.state.ships.find(s => s.id === shipId);
             if (!ship || ship.owner !== socket.id || ship.status !== 'activated') return;
 
-            // Проверяем очки маневренности
-            if (ship.currentManeuverability < maneuverCost) {
+            // Определяем стоимость поворота
+            let maneuverCost = 1;
+
+            // Проверяем, есть ли у корабля бесплатный поворот
+            if (ship.hasFreeTurn) {
+                maneuverCost = 0;
+                ship.hasFreeTurn = false; // Используем бесплатный поворот
+                console.log('Using free turn for rotation');
+            }
+
+            // Проверяем очки маневренности только если поворот не бесплатный
+            if (maneuverCost > 0 && ship.currentManeuverability < maneuverCost) {
                 socket.emit('movementError', { message: 'Недостаточно очков маневренности' });
                 return;
             }
@@ -970,12 +1076,14 @@ module.exports = function(io) {
                 ship.dir = (ship.dir + 1) % 6;
             }
 
-            // Тратим очки маневренности
-            ship.currentManeuverability -= maneuverCost;
+            // Тратим очки маневренности только если поворот не бесплатный
+            if (maneuverCost > 0) {
+                ship.currentManeuverability -= maneuverCost;
+            }
 
-            console.log(`Ship ${shipId} rotated in combat, remaining MP: ${ship.currentManeuverability}`);
+            console.log(`Ship ${shipId} rotated in combat, cost: ${maneuverCost}, remaining MP: ${ship.currentManeuverability}`);
 
-            // Обновляем состояние
+            // Отправляем обновленное состояние
             io.to(`battle_${roomId}`).emit('battleState', b.state);
         });
 
@@ -1125,12 +1233,14 @@ module.exports = function(io) {
             battleState.ships.forEach(s => {
                 if (s.owner === socket.id && s.status === 'activated') {
                     s.status = 'spent';
+                    s.hasFreeTurn = false; // Сбрасываем флаг бесплатного поворота
                     console.log(`Ship ${s.id} automatically moved to spent status`);
                 }
             });
 
             // Все проверки пройдены - активируем корабль
             ship.status = 'activated';
+            ship.hasFreeTurn = false; // При активации корабль не имеет бесплатного поворота
 
             // Убираем использованный кубик из пула
             playerDice.current[diceValue]--;
