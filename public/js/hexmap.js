@@ -10,7 +10,7 @@ let selectedShipForMovement = null; // Корабль, выбранный для
 let movementCells = []; // Доступные гексы для движения
 
 // Направления для кубических координат (соответствуют HEX_DIRECTIONS)
-const CUBE_DIRECTIONS = [
+export const CUBE_DIRECTIONS = [
     { q: -1, r: 0, s: 1 },   // 0: West
     { q: 0, r: -1, s: 1 },   // 1: Northwest
     { q: 1, r: -1, s: 0 },   // 2: Northeast
@@ -49,11 +49,11 @@ const shipClassColors = {
 };
 
 /** Вспомогательные функции для кубических координат */
-function cubeAdd(a, b) {
+export function cubeAdd(a, b) {
     return { q: a.q + b.q, r: a.r + b.r, s: a.s + b.s };
 }
 
-function cubeDistance(a, b) {
+export function cubeDistance(a, b) {
     return (Math.abs(a.q - b.q) + Math.abs(a.r - b.r) + Math.abs(a.s - b.s)) / 2;
 }
 
