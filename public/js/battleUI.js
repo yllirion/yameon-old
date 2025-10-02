@@ -8,7 +8,10 @@ import {
     showMovementCells,
     clearMovementHighlight,
     isMovementCellAvailable,
-    getSelectedShipForMovement
+    getSelectedShipForMovement,
+    cubeAdd,              // НОВЫЙ импорт
+    cubeDistance,         // НОВЫЙ импорт
+    CUBE_DIRECTIONS      // НОВЫЙ импорт
 } from './hexmap.js';
 
 import { initCombatSystem, testCombatSystem, setCombatRoomId } from './combat.js';
@@ -34,6 +37,17 @@ let globalSocket = null;
 // Кэш для проектов кораблей
 let shipProjectsCache = {};
 
+let previewState = {
+    isPreviewMode: false,
+    shipId: null,
+    originalPosition: null,
+    originalDirection: null,
+    originalSpeed: null,
+    originalManeuverability: null,
+    originalFreeTurn: null,
+    movements: [] // История движений для визуализации
+};
+
 /** Пишет сообщение в лог снизу в #battleLog */
 function logBattle(msg) {
     const footer = document.getElementById('battleLog');
@@ -42,6 +56,670 @@ function logBattle(msg) {
     div.textContent = msg;
     footer.appendChild(div);
     footer.scrollTop = footer.scrollHeight;
+}
+
+function getDirectionToTarget(from, to) {
+    const diff = cubeAdd(to, { q: -from.q, r: -from.r, s: -from.s });
+
+    console.log(`Direction from (${from.q},${from.r}) to (${to.q},${to.r})`);
+    console.log(`Diff vector: (${diff.q}, ${diff.r}, ${diff.s})`);
+
+    // Находим ближайшее направление
+    let bestDir = 0;
+    let bestDot = -2;
+
+    for (let i = 0; i < 6; i++) {
+        const dir = CUBE_DIRECTIONS[i];
+        const dot = diff.q * dir.q + diff.r * dir.r + diff.s * dir.s;
+
+        if (dot > bestDot) {
+            bestDot = dot;
+            bestDir = i;
+        }
+    }
+
+    return bestDir;
+}
+
+
+
+// Локальное движение корабля (без сервера)
+function moveShipLocally(ship, targetPosition, allShips) {
+    // Рассчитываем стоимость движения
+    const pathCost = calculateLocalPathCost(ship, targetPosition, allShips);
+
+    if (!pathCost) {
+        logBattle('Недоступная позиция');
+        return;
+    }
+
+    if (ship.currentSpeed < pathCost.speedCost) {
+        logBattle('Недостаточно очков скорости');
+        return;
+    }
+
+    if (ship.currentManeuverability < pathCost.maneuverCost) {
+        logBattle('Недостаточно очков маневренности');
+        return;
+    }
+
+    // Сохраняем движение в историю
+    previewState.movements.push({
+        from: { ...ship.position },
+        to: { ...targetPosition },
+        direction: pathCost.finalDirection,
+        speedCost: pathCost.speedCost,
+        maneuverCost: pathCost.maneuverCost
+    });
+
+    // Обновляем позицию локально
+    ship.position = targetPosition;
+    ship.dir = pathCost.finalDirection;
+    ship.currentSpeed -= pathCost.speedCost;
+    ship.currentManeuverability -= pathCost.maneuverCost;
+
+    // Даем бесплатный поворот если двигались
+    if (pathCost.speedCost > 0) {
+        ship.hasFreeTurn = true;
+    }
+
+    // Перерисовываем корабль
+    updateShipVisuals(ship);
+
+    // Обновляем область движения
+    setTimeout(() => {
+        showMovementCells(ship, allShips);
+
+        // ВАЖНО: Показываем кнопки поворота если есть возможность
+        if (ship.currentManeuverability > 0 || ship.hasFreeTurn) {
+            console.log('Adding rotation controls in preview mode');
+            addRotationControls(
+                ship,
+                true,  // isCurrentPlayer
+                false, // isPlacementPhase
+                (shipId, direction) => handlePreviewRotation(shipId, direction)
+            );
+            showRotationControlsForShip(ship.id);
+        }
+    }, 100);
+
+    logBattle(`Предпросмотр: переход в (${targetPosition.q},${targetPosition.r})`);
+}
+
+function handlePreviewRotation(shipId, direction) {
+    const ship = lastBattleState.ships.find(s => s.id === shipId);
+    if (!ship) return;
+
+    // Определяем стоимость поворота
+    let maneuverCost = 1;
+    if (ship.hasFreeTurn) {
+        maneuverCost = 0;
+        ship.hasFreeTurn = false;
+        logBattle(`Поворот ${direction === 'left' ? 'налево' : 'направо'} (бесплатный)`);
+    } else if (ship.currentManeuverability > 0) {
+        ship.currentManeuverability -= 1;
+        logBattle(`Поворот ${direction === 'left' ? 'налево' : 'направо'} (−1 манёвренность)`);
+    } else {
+        logBattle('Недостаточно очков маневренности');
+        return;
+    }
+
+    // Поворачиваем корабль локально
+    if (direction === 'left') {
+        ship.dir = (ship.dir + 5) % 6;
+    } else if (direction === 'right') {
+        ship.dir = (ship.dir + 1) % 6;
+    }
+
+    // Сохраняем поворот в историю
+    previewState.movements.push({
+        type: 'rotation',
+        direction: direction,
+        maneuverCost: maneuverCost
+    });
+
+    // Обновляем визуально
+    updateShipVisuals(ship);
+
+    // Обновляем кнопки поворота
+    setTimeout(() => {
+        if (ship.currentManeuverability > 0 || ship.hasFreeTurn) {
+            addRotationControls(
+                ship,
+                true,
+                false,
+                (shipId, direction) => handlePreviewRotation(shipId, direction)
+            );
+            showRotationControlsForShip(ship.id);
+        }
+    }, 100);
+}
+
+function enterPreviewMode(ship) {
+    console.log('Entering preview mode for ship:', ship.id);
+
+    // Проверяем, что корабль может быть активирован
+    if (ship.status !== 'ready') {
+        console.log('Ship is not ready, cannot enter preview mode');
+        return;
+    }
+
+    // Если уже в режиме предпросмотра другого корабля - сначала сбрасываем
+    if (previewState.isPreviewMode && previewState.shipId !== ship.id) {
+        console.log('Already in preview mode for another ship, resetting first');
+        resetPreviewMode();
+    }
+
+    // Сохраняем исходное состояние корабля
+    previewState = {
+        isPreviewMode: true,
+        shipId: ship.id,
+        originalPosition: {
+            q: ship.position.q,
+            r: ship.position.r,
+            s: ship.position.s
+        },
+        originalDirection: ship.dir,
+        originalSpeed: ship.currentSpeed,
+        originalManeuverability: ship.currentManeuverability,
+        originalFreeTurn: ship.hasFreeTurn || false,
+        movements: [] // История движений для возможной визуализации маршрута
+    };
+
+    console.log('Preview state saved:', previewState);
+
+    // Показываем визуальный индикатор режима предпросмотра
+    showPreviewIndicator();
+
+    // Добавляем защиту от контекстного меню на всю карту
+    const hexmap = document.getElementById('hexmap');
+    if (hexmap) {
+        hexmap.addEventListener('contextmenu', preventContextMenu, true);
+    }
+
+    // Добавляем специальный класс для визуального выделения корабля в режиме предпросмотра
+    const shipIcon = document.querySelector(`.ship-icon[data-ship-id="${ship.id}"]`);
+    if (shipIcon) {
+        shipIcon.classList.add('preview-mode');
+    }
+
+    // Обновляем карточку корабля с индикатором предпросмотра
+    const container = document.getElementById('playerShipCard');
+    if (container && container.dataset.shipId === ship.id) {
+        const card = container.querySelector('.ship-hover-card');
+        if (card) {
+            // Добавляем индикатор в карточку
+            if (!card.querySelector('.preview-mode-indicator')) {
+                const indicator = document.createElement('div');
+                indicator.className = 'preview-mode-indicator';
+                indicator.innerHTML = '🔍 Режим предпросмотра';
+                indicator.style.cssText = `
+                    background: #FF9800;
+                    color: white;
+                    padding: 4px 8px;
+                    text-align: center;
+                    font-size: 0.8em;
+                    font-weight: bold;
+                    margin-bottom: 4px;
+                `;
+                card.insertBefore(indicator, card.firstChild);
+            }
+        }
+    }
+
+    // Проверяем доступность кубиков для активации
+    const canActivate = checkIfCanActivateShip(ship);
+    if (!canActivate) {
+        logBattle(`⚠️ Внимание: нет подходящих кубов для активации ${ship.shipClass}`);
+    }
+
+    logBattle(`🔍 Режим предпросмотра: ${ship.shipClass} - нажмите ESC для отмены`);
+}
+
+function checkIfCanActivateShip(ship) {
+    if (!lastBattleState || !lastBattleState.dicePools) return false;
+
+    const playerDice = lastBattleState.dicePools[currentPlayerId];
+    if (!playerDice || !playerDice.current) return false;
+
+    const activationValue = classStats[ship.shipClass].activation;
+
+    // Проверяем наличие подходящих кубов
+    for (let value = activationValue; value <= 6; value++) {
+        if (playerDice.current[value] && playerDice.current[value] > 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function preventContextMenu(e) {
+    if (previewState.isPreviewMode) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    }
+}
+
+
+function commitPreviewMode() {
+    if (!previewState.isPreviewMode) return;
+
+    const ship = lastBattleState.ships.find(s => s.id === previewState.shipId);
+    if (!ship) return;
+
+    console.log('Committing preview mode');
+
+    // Сохраняем финальную позицию и направление для отправки на сервер
+    const finalPosition = { ...ship.position };
+    const finalDirection = ship.dir;
+
+    // Рассчитываем общую стоимость всего маршрута
+    let totalSpeedCost = previewState.originalSpeed - ship.currentSpeed;
+    let totalManeuverCost = previewState.originalManeuverability - ship.currentManeuverability;
+
+    console.log('Total movement cost:', {
+        speed: totalSpeedCost,
+        maneuver: totalManeuverCost,
+        movements: previewState.movements.length
+    });
+
+    // Убираем защиту от контекстного меню
+    const hexmap = document.getElementById('hexmap');
+    if (hexmap) {
+        hexmap.removeEventListener('contextmenu', preventContextMenu);
+    }
+
+    // Скрываем индикатор
+    hidePreviewIndicator();
+
+    // Сбрасываем флаг режима предпросмотра
+    previewState.isPreviewMode = false;
+
+    // Если корабль еще не активирован - активируем
+    if (ship.status === 'ready') {
+        const roomId = currentBattleRoomId || lastBattleState.id;
+
+        if (!autoActivateShip(ship.id, roomId, globalSocket)) {
+            // Не удалось активировать - откатываем все изменения
+            console.log('Failed to activate ship, rolling back');
+
+            // Восстанавливаем исходное состояние
+            ship.position = previewState.originalPosition;
+            ship.dir = previewState.originalDirection;
+            ship.currentSpeed = previewState.originalSpeed;
+            ship.currentManeuverability = previewState.originalManeuverability;
+            ship.hasFreeTurn = previewState.originalFreeTurn;
+
+            // Перерисовываем в исходной позиции
+            updateShipVisuals(ship);
+            showMovementCells(ship, lastBattleState.ships);
+
+            logBattle(`Нет подходящих кубов для активации - движение отменено`);
+            return;
+        }
+    }
+
+    // Отправляем финальную позицию на сервер
+    // Задержка нужна, чтобы активация успела обработаться на сервере
+    setTimeout(() => {
+        const roomId = currentBattleRoomId || lastBattleState.id;
+
+        // Если позиция изменилась - отправляем движение
+        if (finalPosition.q !== previewState.originalPosition.q ||
+            finalPosition.r !== previewState.originalPosition.r ||
+            finalPosition.s !== previewState.originalPosition.s ||
+            finalDirection !== previewState.originalDirection) {
+
+            globalSocket.emit('moveShip', {
+                roomId: roomId,
+                shipId: ship.id,
+                targetPosition: finalPosition
+            });
+
+            logBattle(`Позиция зафиксирована: (${finalPosition.q},${finalPosition.r})`);
+        } else {
+            logBattle(`Корабль активирован без перемещения`);
+        }
+    }, 150);
+
+    // Очищаем состояние предпросмотра
+    previewState = {
+        isPreviewMode: false,
+        shipId: null,
+        originalPosition: null,
+        originalDirection: null,
+        originalSpeed: null,
+        originalManeuverability: null,
+        originalFreeTurn: null,
+        movements: []
+    };
+}
+
+function resetPreviewMode() {
+    if (!previewState.isPreviewMode) return;
+
+    const ship = lastBattleState.ships.find(s => s.id === previewState.shipId);
+    if (!ship) return;
+
+    console.log('Resetting preview mode');
+
+    // Восстанавливаем исходное состояние корабля
+    ship.position = previewState.originalPosition;
+    ship.dir = previewState.originalDirection;
+    ship.currentSpeed = previewState.originalSpeed;
+    ship.currentManeuverability = previewState.originalManeuverability;
+    ship.hasFreeTurn = previewState.originalFreeTurn;
+
+    // Перерисовываем корабль в исходной позиции
+    updateShipVisuals(ship);
+
+    // Очищаем подсветку движения
+    clearMovementHighlight();
+
+    // Показываем область движения для исходной позиции
+    setTimeout(() => {
+        showMovementCells(ship, lastBattleState.ships);
+    }, 100);
+
+    // Убираем защиту от контекстного меню
+    const hexmap = document.getElementById('hexmap');
+    if (hexmap) {
+        hexmap.removeEventListener('contextmenu', preventContextMenu);
+    }
+
+    // Убираем индикатор режима предпросмотра
+    hidePreviewIndicator();
+
+    // Сбрасываем состояние предпросмотра
+    previewState = {
+        isPreviewMode: false,
+        shipId: null,
+        originalPosition: null,
+        originalDirection: null,
+        originalSpeed: null,
+        originalManeuverability: null,
+        originalFreeTurn: null,
+        movements: []
+    };
+
+    logBattle(`Предпросмотр отменен - корабль возвращен в исходную позицию`);
+}
+
+
+
+// Обработчик ESC
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && previewState.isPreviewMode) {
+        e.preventDefault();
+        resetPreviewMode();
+    }
+});
+
+function showPreviewIndicator() {
+    let indicator = document.getElementById('previewIndicator');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'previewIndicator';
+        indicator.style.cssText = `
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 165, 0, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        `;
+        document.body.appendChild(indicator);
+    }
+    indicator.innerHTML = '🔍 РЕЖИМ ПРЕДПРОСМОТРА - ESC для отмены';
+}
+
+function hidePreviewIndicator() {
+    const indicator = document.getElementById('previewIndicator');
+    if (indicator) indicator.remove();
+}
+
+
+// В battleUI.js обновить функцию updateShipVisuals:
+
+function updateShipVisuals(ship) {
+    console.log('Updating ship visuals for:', ship.id);
+
+    // Сохраняем текущее состояние выделения
+    const wasSelected = document.querySelector(`.ship-icon[data-ship-id="${ship.id}"]`)?.classList.contains('selected-for-movement');
+
+    // Обновляем позицию и поворот корабля на карте
+    renderPlacedShips(lastBattleState.ships, currentPlayerId);
+
+    // ВАЖНО: После перерисовки нужно восстановить обработчики событий
+    setTimeout(() => {
+        const shipIcon = document.querySelector(`.ship-icon[data-ship-id="${ship.id}"]`);
+        if (!shipIcon) return;
+
+        // Восстанавливаем выделение
+        if (wasSelected) {
+            shipIcon.classList.add('selected-for-movement');
+        }
+
+        // Восстанавливаем обработчики кликов
+        setupShipEventHandlers(shipIcon, ship);
+    }, 50);
+}
+
+function setupShipEventHandlers(shipIcon, ship) {
+    // Удаляем старые обработчики
+    const newIcon = shipIcon.cloneNode(true);
+    shipIcon.parentNode.replaceChild(newIcon, shipIcon);
+    shipIcon = newIcon;
+
+    // Определяем контейнер для карточки
+    const cardContainerId = ship.owner === currentPlayerId ? 'playerShipCard' : 'enemyShipCard';
+
+    // Восстанавливаем HOVER обработчики
+    newIcon.addEventListener('mouseenter', () => {
+        const container = document.getElementById(cardContainerId);
+        if (container && !container.dataset.fixed) {
+            container.innerHTML = '';
+            // Получаем актуальные данные корабля
+            const currentShip = lastBattleState.ships.find(s => s.id === ship.id);
+            if (currentShip) {
+                container.appendChild(createShipCard(currentShip, false));
+            }
+        }
+    });
+
+    newIcon.addEventListener('mouseleave', () => {
+        const container = document.getElementById(cardContainerId);
+        if (container && !container.dataset.fixed) {
+            container.innerHTML = '';
+        }
+    });
+
+    // Обработчики кликов только для своих кораблей
+    if (ship.owner === currentPlayerId) {
+        let clickTimer = null;
+        let clickCount = 0;
+
+        // Обработчик кликов
+        newIcon.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            clickCount++;
+
+            if (clickCount === 1) {
+                clickTimer = setTimeout(() => {
+                    handleSingleClick(ship, ship.id, lastBattleState, globalSocket);
+                    clickCount = 0;
+                }, 250);
+            } else if (clickCount === 2) {
+                clearTimeout(clickTimer);
+                clickCount = 0;
+                handleDoubleClick(ship, ship.id, lastBattleState, globalSocket);
+            }
+        });
+
+        // Правый клик только для своих кораблей
+        newIcon.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const currentShip = lastBattleState.ships.find(s => s.id === ship.id);
+            if (currentShip) {
+                handleRightClick(currentShip, currentShip.id, lastBattleState, globalSocket);
+            }
+            return false;
+        });
+
+        newIcon.oncontextmenu = () => false;
+    }
+}
+
+function calculateLocalPathCost(ship, targetPosition, allShips) {
+    const distance = cubeDistance(ship.position, targetPosition);
+
+    // Простая проверка - можем ли дойти
+    if (distance > ship.currentSpeed) return null;
+
+    // Расчет поворота
+    let maneuverCost = 0;
+    if (distance > 0) {
+        const targetDirection = getDirectionToTarget(ship.position, targetPosition);
+        const directionDiff = Math.abs(targetDirection - ship.dir);
+        const actualDiff = Math.min(directionDiff, 6 - directionDiff);
+
+        if (actualDiff > 0 && !ship.hasFreeTurn) {
+            maneuverCost = actualDiff; // Упрощенно - 1 MP за каждые 60°
+        }
+    }
+
+    return {
+        speedCost: distance,
+        maneuverCost: maneuverCost,
+        finalDirection: distance > 0 ? getDirectionToTarget(ship.position, targetPosition) : ship.dir
+    };
+}
+
+function handleSingleClick(ship, shipId, state, socket) {
+    // Если мы в режиме предпросмотра другого корабля - сбрасываем
+    if (previewState.isPreviewMode && previewState.shipId !== shipId) {
+        resetPreviewMode();
+    }
+
+    // Очищаем предыдущие выделения
+    clearMovementHighlight();
+
+    // Показываем область движения
+    showMovementCells(ship, state.ships);
+
+    // Подсвечиваем выбранный корабль
+    document.querySelectorAll('.ship-icon.selected-for-movement').forEach(el => {
+        el.classList.remove('selected-for-movement');
+    });
+    document.querySelector(`.ship-icon[data-ship-id="${shipId}"]`).classList.add('selected-for-movement');
+
+    // Показываем карточку корабля
+    const container = document.getElementById('playerShipCard');
+    if (container) {
+        container.innerHTML = '';
+        container.appendChild(createShipCard(ship, true));
+        container.dataset.fixed = 'true';
+        container.dataset.shipId = shipId;
+    }
+
+    // Показываем кнопки поворота
+    // В предпросмотре - с особым обработчиком
+    if (previewState.isPreviewMode && previewState.shipId === shipId) {
+        if (ship.currentManeuverability > 0 || ship.hasFreeTurn) {
+            addRotationControls(
+                ship,
+                true,
+                false,
+                (shipId, direction) => handlePreviewRotation(shipId, direction)
+            );
+            showRotationControlsForShip(shipId);
+        }
+    } else if (ship.status === 'activated' && (ship.currentManeuverability > 0 || ship.hasFreeTurn)) {
+        // Обычный режим
+        addRotationControls(
+            ship,
+            true,
+            false,
+            (shipId, direction) => handleCombatRotation(socket, state.id, shipId, direction, ship)
+        );
+        showRotationControlsForShip(shipId);
+    }
+
+    logBattle(`Выбран корабль: ${ship.shipClass}`);
+}
+
+function handleDoubleClick(ship, shipId, state, socket) {
+    console.log('handleDoubleClick called:', {
+        shipId: shipId,
+        shipStatus: ship.status,
+        shipClass: ship.shipClass,
+        currentBattleRoomId: currentBattleRoomId,
+        stateId: state.id
+    });
+
+    if (ship.status === 'ready') {
+        // Используем state.id вместо currentBattleRoomId
+        const roomId = state.id || currentBattleRoomId;
+
+        console.log('Attempting to activate ship with roomId:', roomId);
+
+        // Пытаемся активировать корабль
+        if (autoActivateShip(shipId, roomId, socket)) {
+            logBattle(`Активация ${ship.shipClass}...`);
+
+            // Если мы были в режиме предпросмотра - фиксируем позицию
+            if (previewState.isPreviewMode && previewState.shipId === shipId) {
+                setTimeout(() => {
+                    commitPreviewMode();
+                }, 100);
+            }
+        } else {
+            logBattle(`Нет подходящих кубов для активации ${ship.shipClass}`);
+        }
+    } else {
+        logBattle(`Корабль уже ${ship.status === 'activated' ? 'активирован' : 'сходил'}`);
+    }
+}
+
+function handleRightClick(ship, shipId, state, socket) {
+    console.log('Right click on ship:', shipId, 'Preview mode:', previewState.isPreviewMode);
+
+    // В режиме предпросмотра для неактивированного корабля
+    if (previewState.isPreviewMode && previewState.shipId === shipId && ship.status === 'ready') {
+        logBattle('Активация корабля для стрельбы...');
+
+        // Сначала активируем корабль
+        const roomId = state.id || currentBattleRoomId;
+        if (autoActivateShip(shipId, roomId, socket)) {
+            // Фиксируем позицию
+            setTimeout(() => {
+                commitPreviewMode();
+                // Ждем обновления состояния и показываем арку стрельбы
+                setTimeout(() => {
+                    const updatedShip = lastBattleState.ships.find(s => s.id === shipId);
+                    if (updatedShip && updatedShip.status === 'activated') {
+                        testCombatSystem(updatedShip, lastBattleState.ships);
+                    }
+                }, 300);
+            }, 100);
+        } else {
+            logBattle('Нет подходящих кубов для активации');
+        }
+    } else {
+        // Обычный режим стрельбы для активированного корабля
+        console.log('Normal combat mode for ship:', ship);
+        testCombatSystem(ship, state.ships || lastBattleState.ships);
+    }
 }
 
 /** Подсветка корабля на карте */
@@ -159,97 +837,64 @@ function setupShipClickHandlers(state, playerId) {
 function setupBattleClickHandlers(state, socket, playerId) {
     console.log('Setting up battle click handlers');
 
-    // Обработчики кликов по кораблям в боевой фазе
+    // Обработчики кликов по кораблям
     document.querySelectorAll('.ship-icon').forEach(shipIcon => {
         const shipId = shipIcon.dataset.shipId;
         const ship = state.ships.find(s => s.id === shipId);
 
         if (!ship) return;
 
-        // Определяем в какой контейнер показывать карточку
-        const cardContainerId = ship.owner === playerId ? 'playerShipCard' : 'enemyShipCard';
 
-        shipIcon.addEventListener('mouseenter', () => {
-            const container = document.getElementById(cardContainerId);
-            if (container && !container.dataset.fixed) {
-                container.innerHTML = '';
-                container.appendChild(createShipCard(ship, false));
-            }
-        });
-
-        shipIcon.addEventListener('mouseleave', () => {
-            const container = document.getElementById(cardContainerId);
-            if (container && !container.dataset.fixed) {
-                container.innerHTML = '';
-            }
-        });
-
-        if (ship && ship.owner === playerId && state.currentPlayer === playerId) {
-            if (ship.status === 'activated') {
-                // Для активированного корабля - движение и кнопка завершения
-                shipIcon.style.cursor = 'pointer';
-
-
-            }
-        }
         if (ship && ship.owner === playerId && state.currentPlayer === playerId) {
             shipIcon.style.cursor = 'pointer';
 
-            // Левый клик - показать область движения
-            shipIcon.onclick = (e) => {
+            // Удаляем старые обработчики, чтобы избежать дублирования
+            const newIcon = shipIcon.cloneNode(true);
+            shipIcon.parentNode.replaceChild(newIcon, shipIcon);
+            shipIcon = newIcon;
+
+            let clickTimer = null;
+            let clickCount = 0;
+
+            // Универсальный обработчик кликов
+            shipIcon.addEventListener('click', (e) => {
                 e.preventDefault();
-                console.log('Left click on ship:', shipId);
+                e.stopPropagation();
 
-                // Очищаем предыдущие выделения
-                clearMovementHighlight();
+                clickCount++;
+                console.log(`Click ${clickCount} on ship ${shipId}`);
 
-                // Показываем область движения
-                showMovementCells(ship, state.ships);
+                if (clickCount === 1) {
+                    // Первый клик - ждем возможного второго
+                    clickTimer = setTimeout(() => {
+                        // Одиночный клик
+                        console.log('Processing single click');
+                        handleSingleClick(ship, shipId, state, socket);
+                        clickCount = 0;
+                    }, 250); // 250мс на двойной клик
 
-                // Подсвечиваем выбранный корабль
-                document.querySelectorAll('.ship-icon.selected-for-movement').forEach(el => {
-                    el.classList.remove('selected-for-movement');
-                });
-                shipIcon.classList.add('selected-for-movement');
-
-                const container = document.getElementById('playerShipCard');
-                if (container) {
-                    container.innerHTML = '';
-                    container.appendChild(createShipCard(ship, true)); // true = детальная карточка
-                    container.dataset.fixed = 'true';
-                    container.dataset.shipId = shipId;
+                } else if (clickCount === 2) {
+                    // Двойной клик
+                    clearTimeout(clickTimer);
+                    clickCount = 0;
+                    console.log('Processing double click');
+                    handleDoubleClick(ship, shipId, state, socket);
                 }
+            });
 
-                if (ship.status === 'activated' && (ship.currentManeuverability > 0 || ship.hasFreeTurn)) {
-                    addRotationControls(
-                        ship,
-                        true,  // isCurrentPlayer
-                        false, // isPlacementPhase (false = боевая фаза)
-                        (shipId, direction) => handleCombatRotation(socket, state.id, shipId, direction, ship)
-                    );
-
-                    // Показываем кнопки только для этого корабля
-                    showRotationControlsForShip(shipId);
-                }
-
-                logBattle(`Выбран корабль для движения: ${ship.shipClass} в (${ship.position.q},${ship.position.r})`);
-            };
-
-            // Правый клик - показать область стрельбы (пока заглушка)
-            shipIcon.oncontextmenu = (e) => {
+            // Правый клик остается отдельным
+            shipIcon.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
-                console.log('Right click on ship:', shipId);
-                testCombatSystem(ship, state.ships);
-                logBattle(`Боевой режим для ${ship.shipClass}`);
-            };
+                console.log('Processing right click');
+                handleRightClick(ship, shipId, state, socket);
+            });
+
+            console.log(`Click handlers set up for ship ${shipId}`);
         }
     });
 
     // Обработчики кликов по гексам для движения
     document.querySelectorAll('#hexmap polygon').forEach(poly => {
-        let clickTimer = null;
-        let clickCount = 0;
-
         poly.onclick = (e) => {
             const q = parseInt(poly.dataset.q);
             const r = parseInt(poly.dataset.r);
@@ -257,49 +902,27 @@ function setupBattleClickHandlers(state, socket, playerId) {
 
             if (!isMovementCellAvailable(q, r, s)) return;
 
-            clickCount++;
+            const selectedShip = getSelectedShipForMovement();
+            if (!selectedShip || state.currentPlayer !== playerId) return;
 
-            if (clickCount === 1) {
-                // Одиночный клик - предпросмотр маршрута
-                clickTimer = setTimeout(() => {
-                    clickCount = 0;
-                    // Показываем предпросмотр пути (можно добавить визуализацию)
-                    console.log('Preview path to:', { q, r, s });
-                }, 300); // 300мс для определения двойного клика
-
-            } else if (clickCount === 2) {
-                // Двойной клик - движение + автоактивация
-                clearTimeout(clickTimer);
-                clickCount = 0;
-
-                const selectedShip = getSelectedShipForMovement();
-                if (selectedShip && state.currentPlayer === playerId) {
-
-                    // Автоактивация если корабль еще не активирован
-                    if (selectedShip.status === 'ready') {
-                        if (!autoActivateShip(selectedShip.id, state.id, socket)) {
-                            return; // Не удалось активировать
-                        }
-                        // Ждем немного чтобы активация прошла
-                        setTimeout(() => {
-                            socket.emit('moveShip', {
-                                roomId: state.id,
-                                shipId: selectedShip.id,
-                                targetPosition: { q, r, s }
-                            });
-                        }, 100);
-                    } else {
-                        // Корабль уже активирован - просто двигаем
-                        socket.emit('moveShip', {
-                            roomId: state.id,
-                            shipId: selectedShip.id,
-                            targetPosition: { q, r, s }
-                        });
-                    }
-
-                    clearMovementHighlight();
-                    logBattle(`Корабль перемещается в (${q},${r})`);
+            // НОВАЯ ЛОГИКА: одиночный клик для движения
+            if (selectedShip.status === 'ready') {
+                // Входим в режим предпросмотра при первом движении
+                if (!previewState.isPreviewMode) {
+                    enterPreviewMode(selectedShip);
                 }
+
+                // Двигаем корабль локально (без отправки на сервер)
+                moveShipLocally(selectedShip, { q, r, s }, state.ships);
+
+            } else if (selectedShip.status === 'activated') {
+                // Активированный корабль - обычное движение
+                socket.emit('moveShip', {
+                    roomId: state.id,
+                    shipId: selectedShip.id,
+                    targetPosition: { q, r, s }
+                });
+                logBattle(`Корабль перемещается в (${q},${r})`);
             }
         };
     });
@@ -832,18 +1455,28 @@ function highlightActivatableShips(diceValue) {
 }
 
 function autoActivateShip(shipId, roomId, socket) {
+    console.log('autoActivateShip called:', { shipId, roomId });
+
     const ship = lastBattleState.ships.find(s => s.id === shipId);
-    if (!ship || ship.status !== 'ready') return false;
+    if (!ship || ship.status !== 'ready') {
+        console.log('Ship not found or not ready');
+        return false;
+    }
 
     const playerDice = lastBattleState.dicePools[currentPlayerId];
-    if (!playerDice) return false;
+    if (!playerDice) {
+        console.log('No dice pool for player');
+        return false;
+    }
 
     const activationValue = classStats[ship.shipClass].activation;
+    console.log(`Ship ${ship.shipClass} needs ${activationValue}+`);
+    console.log('Available dice:', playerDice.current);
 
     // Ищем минимальный подходящий куб
     for (let value = activationValue; value <= 6; value++) {
         if (playerDice.current[value] && playerDice.current[value] > 0) {
-            console.log(`Auto-activating ship with dice ${value}`);
+            console.log(`Found suitable dice: ${value}`);
             socket.emit('activateShip', {
                 roomId: roomId,
                 shipId: shipId,
@@ -853,6 +1486,7 @@ function autoActivateShip(shipId, roomId, socket) {
         }
     }
 
+    console.log('No suitable dice found');
     logBattle(`Нет подходящих кубов для активации ${ship.shipClass} (нужен ${activationValue}+)`);
     return false;
 }
