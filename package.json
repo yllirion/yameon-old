@@ -1,17 +1,11 @@
 {
-  "name": "yameon",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "express": "^5.1.0",
-    "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1"
-  }
+  "name": "metalmadness-net",
+  "version": "0.2.0",
+  "type": "module",
+  "private": true,
+  "description": "MetalMadness: rules core, Canvas client and a minimal Socket.IO server for two players",
+  "scripts": { "start": "node server.js", "test": "node --test", "build": "node build.mjs" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "socket.io": "^4.8.1" },
+  "devDependencies": { "esbuild": "^0.25.0", "socket.io-client": "^4.8.1" }
 }
